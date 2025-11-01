@@ -29,7 +29,7 @@ from nerfstudio.configs.config_utils import to_immutable_dict
 from nerfstudio.field_components.encodings import NeRFEncoding
 from nerfstudio.field_components.field_heads import FieldHeadNames
 from nerfstudio.field_components.temporal_distortions import TemporalDistortionKind
-from nerfstudio.fields.vanilla_nerf_field import NeRFField
+from vanilla_field import NeRFField
 from nerfstudio.model_components.losses import MSELoss, scale_gradients_by_distance_squared
 from nerfstudio.model_components.ray_samplers import PDFSampler, UniformSampler
 from nerfstudio.model_components.renderers import AccumulationRenderer, DepthRenderer, RGBRenderer
@@ -74,7 +74,7 @@ class NeRFModel(Model):
         self.field_coarse = None
         self.field_fine = None
         self.temporal_distortion = None
-
+        self.out_dim= None
         super().__init__(
             config=config,
             **kwargs,
@@ -101,6 +101,7 @@ class NeRFModel(Model):
             position_encoding=position_encoding,
             direction_encoding=direction_encoding,
         )
+
 
         # samplers
         self.sampler_uniform = UniformSampler(num_samples=self.config.num_coarse_samples)
@@ -182,7 +183,9 @@ class NeRFModel(Model):
         )
         accumulation_fine = self.renderer_accumulation(weights_fine)
         depth_fine = self.renderer_depth(weights_fine, ray_samples_pdf)
-
+        ### Uncertainty
+        uncert_field = field_outputs_fine[FieldHeadNames.UNCERTAINTY]
+        uncert_fine = torch.sum(weights_fine  * weights_fine  * uncert_field, -1)
         outputs = {
             "rgb_coarse": rgb_coarse,
             "rgb_fine": rgb_fine,
@@ -190,6 +193,7 @@ class NeRFModel(Model):
             "accumulation_fine": accumulation_fine,
             "depth_coarse": depth_coarse,
             "depth_fine": depth_fine,
+            "uncertainty_fine": uncert_fine,
         }
         return outputs
 
@@ -237,6 +241,12 @@ class NeRFModel(Model):
             near_plane=self.config.collider_params["near_plane"],
             far_plane=self.config.collider_params["far_plane"],
         )
+        uncertainty_fine = colormaps.apply_depth_colormap(
+            outputs["uncertainty_fine"],
+            accumulation=outputs["accumulation_fine"],
+            near_plane=self.config.collider_params["near_plane"],
+            far_plane=self.config.collider_params["far_plane"],
+        )
 
         combined_rgb = torch.cat([image, rgb_coarse, rgb_fine], dim=1)
         combined_acc = torch.cat([acc_coarse, acc_fine], dim=1)
@@ -260,5 +270,5 @@ class NeRFModel(Model):
             "fine_ssim": float(fine_ssim),
             "fine_lpips": float(fine_lpips),
         }
-        images_dict = {"img": combined_rgb, "accumulation": combined_acc, "depth": combined_depth}
+        images_dict = {"img": combined_rgb, "accumulation": combined_acc, "depth": combined_depth, "uncertainty": uncertainty_fine}
         return metrics_dict, images_dict
