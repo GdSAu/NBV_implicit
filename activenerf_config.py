@@ -1,21 +1,3 @@
-# Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-"""
-Implementation of vanilla nerf.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -37,44 +19,117 @@ from nerfstudio.models.base_model import Model, ModelConfig
 from nerfstudio.utils import colormaps, misc
 from nerfstudio.field_components.field_heads import DensityFieldHead, FieldHead, FieldHeadNames, RGBFieldHead, UncertaintyFieldHead
 
-@dataclass
-class VanillaModelConfig(ModelConfig):
-    """Vanilla Model Config"""
 
-    _target: Type = field(default_factory=lambda: NeRFModel)
+
+@dataclass
+class ActiveNeRFModelConfig(ModelConfig):
+    """ActiveNeRF Model Config - COMPLETO"""
+
+    _target: Type = field(default_factory=lambda: ActiveNeRFModel)
+    
+    # ===== PARÁMETROS QUE FALTABAN =====
+    beta_min: float = 0.01
+    """Minimum uncertainty value"""
+    
+    w: float = 0.01
+    """Weight for uncertainty loss"""
+    
     num_coarse_samples: int = 64
     """Number of samples in coarse field evaluation"""
+    
     num_importance_samples: int = 128
     """Number of samples in fine field evaluation"""
-
+    
     enable_temporal_distortion: bool = False
     """Specifies whether or not to include ray warping based on time."""
-    temporal_distortion_params: Dict[str, Any] = to_immutable_dict({"kind": TemporalDistortionKind.DNERF})
+    
+    temporal_distortion_params: Dict[str, Any] = field(
+        default_factory=lambda: {"kind": "dnerf"}
+    )
     """Parameters to instantiate temporal distortion with"""
+    
     use_gradient_scaling: bool = False
     """Use gradient scaler where the gradients are lower for points closer to the camera."""
+    
     background_color: Literal["random", "last_sample", "black", "white"] = "white"
     """Whether to randomize the background color."""
+    
+    # ===== PARÁMETROS DE ACTIVENERF =====
+    use_uncertainty: bool = True
+    """Enable uncertainty estimation (CRITICAL for ActiveNeRF)"""
+    
+    enable_uncertainty_estimation: bool = True
+    """Enable additional uncertainty estimation mechanisms"""
+    
+    uncertainty_method: str = "density_variance"
+    """Method for computing uncertainty"""
+    
+    uncertainty_loss_weight: float = 0.01
+    """Weight for uncertainty regularization loss"""
+    
+    use_uncertainty_loss: bool = True
+    """Whether to include uncertainty in the loss function"""
+    
+    enable_entropy_regularization: bool = True
+    """Encourage exploration through entropy regularization"""
+    
+    entropy_loss_weight: float = 0.001
+    """Weight for entropy regularization"""
+    
+    loss_coefficients: Dict[str, float] = field(default_factory=lambda: {
+        "rgb_loss_coarse": 1.0,
+        "rgb_loss_fine": 1.0,
+        "uncertainty_loss": 0.01,
+        "entropy_loss": 0.001,
+    })
+    """Loss coefficients for different loss terms"""
 
 
-class NeRFModel(Model):
-    """Vanilla NeRF model
 
+# ===== UNCERTAINTY RENDERER =====
+class UncertaintyRenderer:
+    """Renderer for uncertainty values"""
+    
+    def __call__(self, betas: Tensor, weights: Tensor) -> Tensor:
+        """
+        Render uncertainty from per-sample betas and weights.
+        
+        Args:
+            betas: Uncertainty values per sample [batch, num_samples, 1]
+            weights: Rendering weights [batch, num_samples, 1]
+            
+        Returns:
+            Rendered uncertainty [batch, 1]
+        """
+        # Weighted sum (similar to RGB rendering)
+        uncertainty = torch.sum(weights * betas, dim=-2)
+        return uncertainty
+
+
+# ===== MODELO =====
+class ActiveNeRFModel(Model):
+    """
+    ActiveNeRF Model with Uncertainty Estimation
+    
     Args:
-        config: Basic NeRF configuration to instantiate model
+        config: ActiveNeRF configuration to instantiate model
     """
 
-    config: VanillaModelConfig
+    config: ActiveNeRFModelConfig
 
     def __init__(
         self,
-        config: VanillaModelConfig,
+        config: ActiveNeRFModelConfig,
         **kwargs,
     ) -> None:
+        # Usar parámetros del config (no del __init__)
+        self.beta_min = config.beta_min
+        self.w = config.w
         self.field_coarse = None
         self.field_fine = None
         self.temporal_distortion = None
-        self.out_dim= None
+        self.out_dim = None
+        
         super().__init__(
             config=config,
             **kwargs,
@@ -84,7 +139,7 @@ class NeRFModel(Model):
         """Set the fields and modules"""
         super().populate_modules()
 
-        # fields
+        # ===== Encodings =====
         position_encoding = NeRFEncoding(
             in_dim=3, num_frequencies=10, min_freq_exp=0.0, max_freq_exp=8.0, include_input=True
         )
@@ -92,6 +147,7 @@ class NeRFModel(Model):
             in_dim=3, num_frequencies=4, min_freq_exp=0.0, max_freq_exp=4.0, include_input=True
         )
 
+        # ===== Fields =====
         self.field_coarse = NeRFField(
             position_encoding=position_encoding,
             direction_encoding=direction_encoding,
@@ -100,24 +156,23 @@ class NeRFModel(Model):
         self.field_fine = NeRFField(
             position_encoding=position_encoding,
             direction_encoding=direction_encoding,
-            field_heads = (RGBFieldHead, UncertaintyFieldHead)
+            field_heads=(RGBFieldHead, UncertaintyFieldHead)
         )
 
-
-        # samplers
+        # ===== Samplers =====
         self.sampler_uniform = UniformSampler(num_samples=self.config.num_coarse_samples)
         self.sampler_pdf = PDFSampler(num_samples=self.config.num_importance_samples)
 
-        # renderers
+        # ===== Renderers =====
         self.renderer_rgb = RGBRenderer(background_color=self.config.background_color)
         self.renderer_accumulation = AccumulationRenderer()
         self.renderer_depth = DepthRenderer()
         self.renderer_unct = UncertaintyRenderer()
 
-        # losses
+        # ===== Losses =====
         self.rgb_loss = MSELoss()
 
-        # metrics
+        # ===== Metrics =====
         from torchmetrics.functional import structural_similarity_index_measure
         from torchmetrics.image import PeakSignalNoiseRatio
         from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
@@ -126,28 +181,37 @@ class NeRFModel(Model):
         self.ssim = structural_similarity_index_measure
         self.lpips = LearnedPerceptualImagePatchSimilarity(normalize=True)
 
+        # ===== Temporal distortion =====
         if getattr(self.config, "enable_temporal_distortion", False):
-            params = self.config.temporal_distortion_params
-            kind = params.pop("kind")
-            self.temporal_distortion = kind.to_temporal_distortion(params)
+            from nerfstudio.model_components.temporal_distortions import TemporalDistortionKind
+            params = self.config.temporal_distortion_params.copy()
+            kind = params.pop("kind", "dnerf")
+            kind_enum = TemporalDistortionKind(kind)
+            self.temporal_distortion = kind_enum.to_temporal_distortion(params)
         
-        ## COLORMAPS
-        self.color_opt = colormaps.ColormapOptions(colormap='inferno')
+        # ===== Colormaps =====
+        self.color_opt = colormaps.ColormapOptions(colormap='magma')
 
     def get_param_groups(self) -> Dict[str, List[Parameter]]:
+        """Get parameter groups for optimization"""
         param_groups = {}
         if self.field_coarse is None or self.field_fine is None:
             raise ValueError("populate_fields() must be called before get_param_groups")
+        
         param_groups["fields"] = list(self.field_coarse.parameters()) + list(self.field_fine.parameters())
+        
         if self.temporal_distortion is not None:
             param_groups["temporal_distortion"] = list(self.temporal_distortion.parameters())
+        
         return param_groups
 
-    def get_outputs(self, ray_bundle: RayBundle):
+    def get_outputs(self, ray_bundle: RayBundle) -> Dict[str, Tensor]:
+        """Forward pass returning RGB and uncertainty"""
+        
         if self.field_coarse is None or self.field_fine is None:
             raise ValueError("populate_fields() must be called before get_outputs")
 
-        # uniform sampling
+        # ===== Uniform sampling =====
         ray_samples_uniform = self.sampler_uniform(ray_bundle)
         if self.temporal_distortion is not None:
             offsets = None
@@ -157,10 +221,11 @@ class NeRFModel(Model):
                 )
             ray_samples_uniform.frustums.set_offsets(offsets)
 
-        # coarse field:
+        # ===== Coarse field =====
         field_outputs_coarse = self.field_coarse.forward(ray_samples_uniform)
         if self.config.use_gradient_scaling:
             field_outputs_coarse = scale_gradients_by_distance_squared(field_outputs_coarse, ray_samples_uniform)
+        
         weights_coarse = ray_samples_uniform.get_weights(field_outputs_coarse[FieldHeadNames.DENSITY])
         rgb_coarse = self.renderer_rgb(
             rgb=field_outputs_coarse[FieldHeadNames.RGB],
@@ -169,7 +234,7 @@ class NeRFModel(Model):
         accumulation_coarse = self.renderer_accumulation(weights_coarse)
         depth_coarse = self.renderer_depth(weights_coarse, ray_samples_uniform)
 
-        # pdf sampling
+        # ===== PDF sampling =====
         ray_samples_pdf = self.sampler_pdf(ray_bundle, ray_samples_uniform, weights_coarse)
         if self.temporal_distortion is not None:
             offsets = None
@@ -177,10 +242,11 @@ class NeRFModel(Model):
                 offsets = self.temporal_distortion(ray_samples_pdf.frustums.get_positions(), ray_samples_pdf.times)
             ray_samples_pdf.frustums.set_offsets(offsets)
 
-        # fine field:
+        # ===== Fine field =====
         field_outputs_fine = self.field_fine.forward(ray_samples_pdf)
         if self.config.use_gradient_scaling:
             field_outputs_fine = scale_gradients_by_distance_squared(field_outputs_fine, ray_samples_pdf)
+        
         weights_fine = ray_samples_pdf.get_weights(field_outputs_fine[FieldHeadNames.DENSITY])
         rgb_fine = self.renderer_rgb(
             rgb=field_outputs_fine[FieldHeadNames.RGB],
@@ -188,10 +254,11 @@ class NeRFModel(Model):
         )
         accumulation_fine = self.renderer_accumulation(weights_fine)
         depth_fine = self.renderer_depth(weights_fine, ray_samples_pdf)
-        ### Uncertainty
-        uncert_field = field_outputs_fine[FieldHeadNames.UNCERTAINTY]
-        uncert_fine =  self.renderer_unct(betas= uncert_field, weights = weights_fine) 
-        #uncert_fine = torch.sum(weights_fine  * weights_fine  * uncert_field, -1)
+        
+        # ===== Uncertainty =====
+        uncert_field = field_outputs_fine[FieldHeadNames.UNCERTAINTY] + self.beta_min
+        uncert_fine = self.renderer_unct(betas=uncert_field, weights=weights_fine)
+        
         outputs = {
             "rgb_coarse": rgb_coarse,
             "rgb_fine": rgb_fine,
@@ -200,13 +267,18 @@ class NeRFModel(Model):
             "depth_coarse": depth_coarse,
             "depth_fine": depth_fine,
             "uncertainty_fine": uncert_fine,
+            "weights_fine": weights_fine,  # Para entropy loss
+            "density_fine": field_outputs_fine[FieldHeadNames.DENSITY],  # Para análisis
         }
         return outputs
 
     def get_loss_dict(self, outputs, batch, metrics_dict=None) -> Dict[str, torch.Tensor]:
-        # Scaling metrics by coefficients to create the losses.
+        """Compute losses including uncertainty regularization"""
+        
         device = outputs["rgb_coarse"].device
         image = batch["image"].to(device)
+        
+        # ===== RGB Losses =====
         coarse_pred, coarse_image = self.renderer_rgb.blend_background_for_loss_computation(
             pred_image=outputs["rgb_coarse"],
             pred_accumulation=outputs["accumulation_coarse"],
@@ -221,56 +293,105 @@ class NeRFModel(Model):
         rgb_loss_coarse = self.rgb_loss(coarse_image, coarse_pred)
         rgb_loss_fine = self.rgb_loss(fine_image, fine_pred)
 
-        loss_dict = {"rgb_loss_coarse": rgb_loss_coarse, "rgb_loss_fine": rgb_loss_fine}
+        loss_dict = {
+            "rgb_loss_coarse": rgb_loss_coarse,
+            "rgb_loss_fine": rgb_loss_fine
+        }
+        
+        # ===== Uncertainty Loss (regularización) =====
+        if self.config.use_uncertainty and self.config.use_uncertainty_loss:
+            if "uncertainty_fine" in outputs:
+                # Penalizar uncertainty muy alta (evita colapso)
+                uncertainty_loss = outputs["uncertainty_fine"].mean()
+                loss_dict["uncertainty_loss"] = uncertainty_loss * self.config.uncertainty_loss_weight
+        
+        # ===== Entropy Loss (fomentar exploración) =====
+        if self.config.enable_entropy_regularization and "weights_fine" in outputs:
+            weights = outputs["weights_fine"]
+            # Normalizar pesos para que sumen 1
+            weights_norm = weights / (weights.sum(-1, keepdim=True) + 1e-10)
+            # Entropía: -sum(p * log(p))
+            entropy = -(weights_norm * torch.log(weights_norm + 1e-10)).sum(-1).mean()
+            # Queremos maximizar entropía (minimizar -entropy)
+            loss_dict["entropy_loss"] = -entropy * self.config.entropy_loss_weight
+        
+        # Aplicar coeficientes
         loss_dict = misc.scale_dict(loss_dict, self.config.loss_coefficients)
+        
         return loss_dict
 
     def get_image_metrics_and_images(
         self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]
     ) -> Tuple[Dict[str, float], Dict[str, torch.Tensor]]:
+        """Compute metrics and create visualization images"""
+        
         image = batch["image"].to(outputs["rgb_coarse"].device)
         image = self.renderer_rgb.blend_background(image)
         rgb_coarse = outputs["rgb_coarse"]
         rgb_fine = outputs["rgb_fine"]
+        
         acc_coarse = colormaps.apply_colormap(outputs["accumulation_coarse"])
         acc_fine = colormaps.apply_colormap(outputs["accumulation_fine"])
-        assert self.config.collider_params is not None
-        depth_coarse = colormaps.apply_depth_colormap(
-            outputs["depth_coarse"],
-            accumulation=outputs["accumulation_coarse"],
-            near_plane=self.config.collider_params["near_plane"],
-            far_plane=self.config.collider_params["far_plane"],
-        )
-        depth_fine = colormaps.apply_depth_colormap(
-            outputs["depth_fine"],
-            accumulation=outputs["accumulation_fine"],
-            near_plane=self.config.collider_params["near_plane"],
-            far_plane=self.config.collider_params["far_plane"],
-        )
-        # --- INCERTIDUMBRE ---
-        uncertainty_fine =  colormaps.apply_colormap(outputs["uncertainty_fine"], colormap_options = self.color_opt)
         
+        # Depth
+        if self.config.collider_params is not None:
+            depth_coarse = colormaps.apply_depth_colormap(
+                outputs["depth_coarse"],
+                accumulation=outputs["accumulation_coarse"],
+                near_plane=self.config.collider_params["near_plane"],
+                far_plane=self.config.collider_params["far_plane"],
+            )
+            depth_fine = colormaps.apply_depth_colormap(
+                outputs["depth_fine"],
+                accumulation=outputs["accumulation_fine"],
+                near_plane=self.config.collider_params["near_plane"],
+                far_plane=self.config.collider_params["far_plane"],
+            )
+        else:
+            depth_coarse = colormaps.apply_colormap(outputs["depth_coarse"])
+            depth_fine = colormaps.apply_colormap(outputs["depth_fine"])
+        
+        # Uncertainty
+        uncertainty_fine = colormaps.apply_colormap(
+            outputs["uncertainty_fine"], 
+            colormap_options=self.color_opt
+        )
+        
+        # Combine images
         combined_rgb = torch.cat([image, rgb_coarse, rgb_fine], dim=1)
         combined_acc = torch.cat([acc_coarse, acc_fine], dim=1)
         combined_depth = torch.cat([depth_coarse, depth_fine], dim=1)
 
-        # Switch images from [H, W, C] to [1, C, H, W] for metrics computations
-        image = torch.moveaxis(image, -1, 0)[None, ...]
-        rgb_coarse = torch.moveaxis(rgb_coarse, -1, 0)[None, ...]
-        rgb_fine = torch.moveaxis(rgb_fine, -1, 0)[None, ...]
+        # Metrics
+        image_metric = torch.moveaxis(image, -1, 0)[None, ...]
+        rgb_coarse_metric = torch.moveaxis(rgb_coarse, -1, 0)[None, ...]
+        rgb_fine_metric = torch.moveaxis(rgb_fine, -1, 0)[None, ...]
 
-        coarse_psnr = self.psnr(image, rgb_coarse)
-        fine_psnr = self.psnr(image, rgb_fine)
-        fine_ssim = self.ssim(image, rgb_fine)
-        fine_lpips = self.lpips(image, rgb_fine)
+        coarse_psnr = self.psnr(image_metric, rgb_coarse_metric)
+        fine_psnr = self.psnr(image_metric, rgb_fine_metric)
+        fine_ssim = self.ssim(image_metric, rgb_fine_metric)
+        fine_lpips = self.lpips(image_metric, rgb_fine_metric)
+        
         assert isinstance(fine_ssim, torch.Tensor)
 
         metrics_dict = {
             "psnr": float(fine_psnr.item()),
-            "coarse_psnr": float(coarse_psnr),
-            "fine_psnr": float(fine_psnr),
-            "fine_ssim": float(fine_ssim),
-            "fine_lpips": float(fine_lpips),
+            "coarse_psnr": float(coarse_psnr.item()),
+            "fine_psnr": float(fine_psnr.item()),
+            "fine_ssim": float(fine_ssim.item()),
+            "fine_lpips": float(fine_lpips.item()),
         }
-        images_dict = {"img": combined_rgb, "accumulation": combined_acc, "depth": combined_depth, "uncertainty": uncertainty_fine}
+        
+        # Añadir métrica de uncertainty
+        if "uncertainty_fine" in outputs:
+            avg_uncertainty = outputs["uncertainty_fine"].mean().item()
+            metrics_dict["avg_uncertainty"] = float(avg_uncertainty)
+        
+        images_dict = {
+            "img": combined_rgb,
+            "accumulation": combined_acc,
+            "depth": combined_depth,
+            "uncertainty": uncertainty_fine
+        }
+        
         return metrics_dict, images_dict

@@ -100,9 +100,6 @@ class MLP(FieldComponent):
                 n_output_dims=self.out_dim,
                 network_config=network_config,
             )
-        ##ADDED to ACTIVENERF
-        #self.uncertainty_activation = nn.Softplus()
-
 
 
     @classmethod
@@ -148,11 +145,6 @@ class MLP(FieldComponent):
                     layers.append(nn.Linear(self.layer_width, self.layer_width))
             layers.append(nn.Linear(self.layer_width, self.out_dim))
         self.layers = nn.ModuleList(layers)
-        # ##ADDED to ACTIVENERF
-        #self.rgb_linear = nn.Linear(self.out_dim, 3)
-        #self.alpha_linear = nn.Linear(self.out_dim, 1)
-        #self.uncertainty_linear = nn.Linear(self.out_dim, 1)
-        #self.out_dim = 5
 
     def pytorch_fwd(self, in_tensor: Float[Tensor, "*bs in_dim"]) -> Float[Tensor, "*bs out_dim"]:
         """Process input with a multilayer perceptron.
