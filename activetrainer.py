@@ -32,7 +32,7 @@ class ActiveNeRFTrainerConfig(TrainerConfig):
     uncertainty_method: Literal["entropy", "variance", "ensemble"] = "entropy"
     """Method to compute uncertainty for view selection"""
     
-    candidate_views_sampling: int = 100
+    candidate_views_sampling: int = 10
     """Number of candidate views to sample for selection"""
     
     max_views: Optional[int] = None
@@ -246,7 +246,7 @@ class ActiveNeRFTrainer(Trainer):
             scalar=max_uncertainty, 
             step=step
         )
-        
+        del uncertainties
         print(f"[ActiveNeRF] Step {step}: Added {num_to_select} views. "
               f"Total active views: {len(self.active_views)}/{len(self.active_views) + len(self.available_views)}")
     
@@ -263,56 +263,93 @@ class ActiveNeRFTrainer(Trainer):
         self.pipeline.eval()
         uncertainties = []
         
+        # Get the device from the model parameters
+        device = next(self.pipeline.model.parameters()).device
+        
         with torch.no_grad():
             for idx in candidate_indices:
                 # Get camera for this view
                 camera = self.pipeline.datamanager.train_dataset.cameras[int(idx)]
                 
+                # Move camera to correct device if needed
+                camera = camera.to(device)
+                
                 if self.config.uncertainty_method == "entropy":
-                    uncertainty = self._compute_entropy_uncertainty(camera)
+                    uncertainty = self._compute_entropy_uncertainty(camera, device)
                 elif self.config.uncertainty_method == "variance":
-                    uncertainty = self._compute_variance_uncertainty(camera)
+                    uncertainty = self._compute_variance_uncertainty(camera, device)
                 elif self.config.uncertainty_method == "ensemble":
-                    uncertainty = self._compute_ensemble_uncertainty(camera)
+                    uncertainty = self._compute_ensemble_uncertainty(camera, device)
                 else:
                     raise ValueError(f"Unknown uncertainty method: {self.config.uncertainty_method}")
                 
                 uncertainties.append(uncertainty)
         
+        # Final cache clear
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
         self.pipeline.train()
-        return np.array(uncertainties)
+        uncertainties_np = []
+        for u in uncertainties:
+            if isinstance(u, torch.Tensor):
+                uncertainties_np.append(u.cpu().item())
+            else:
+                uncertainties_np.append(u)
+        
+        return np.array(uncertainties_np)
     
-    def _compute_entropy_uncertainty(self, camera) -> float:
+    def _compute_entropy_uncertainty(self, camera,device) -> float:
         """Compute entropy-based uncertainty for a camera view"""
-        # Render the view
-        camera_ray_bundle = camera.generate_rays(camera_indices=0)
+        # Render the view - don't specify camera_indices to avoid batch dimension issues
+        camera_ray_bundle = camera.generate_rays(camera_indices=0, keep_shape=False)
         
+        # Move ray bundle to device
+        camera_ray_bundle = camera_ray_bundle.to(device)
+        ##Extra
+        camera_ray_bundle = self.pipeline.model.collider(camera_ray_bundle)
+
+        # Flatten ray bundle if needed (remove batch dimension)
+        if hasattr(camera_ray_bundle, 'flatten'):
+            camera_ray_bundle = camera_ray_bundle.flatten()
         # Get model outputs
-        outputs = self.pipeline.model(camera_ray_bundle)
-        
+        outputs = self.pipeline.model.get_outputs(camera_ray_bundle)
+
+        if torch.cuda.is_available():
+            del camera_ray_bundle
+            torch.cuda.empty_cache()
+
         # Compute entropy from density/occupancy
-        if "density" in outputs:
-            density = outputs["density"]
-            # Normalize to probability
-            prob = torch.sigmoid(density)
+        if "density_fine" in outputs:
+            uncertainty = outputs["uncertainty_fine"]
+            ## VERIFICAR SI ES QUE ES NECESARIO EL SIGMOIDE
+            # WOrking, if using just uncertainty fine the model stores all the image
+            prob = torch.sigmoid(uncertainty)
             entropy = -(prob * torch.log(prob + 1e-10) + (1 - prob) * torch.log(1 - prob + 1e-10))
             uncertainty = entropy.mean().item()
         else:
             # Fallback: use RGB variance as proxy
-            rgb = outputs["rgb"]
+            rgb = outputs["rgb_fine"]
             uncertainty = rgb.var(dim=-1).mean().item()
         
         return uncertainty
     
-    def _compute_variance_uncertainty(self, camera) -> float:
+    def _compute_variance_uncertainty(self, camera, device) -> float:
         """Compute variance-based uncertainty (requires multiple forward passes)"""
         num_samples = 5
-        camera_ray_bundle = camera.generate_rays(camera_indices=0)
+        camera_ray_bundle = camera.generate_rays(camera_indices=0, keep_shape=False)
+        
+        # Move ray bundle to device
+        camera_ray_bundle = camera_ray_bundle.to(device)
+        
+        # Flatten ray bundle if needed
+        if hasattr(camera_ray_bundle, 'flatten'):
+            camera_ray_bundle = camera_ray_bundle.flatten()
         
         rgb_samples = []
         for _ in range(num_samples):
             outputs = self.pipeline.model(camera_ray_bundle)
-            rgb_samples.append(outputs["rgb"])
+            rgb_samples.append(outputs["rgb_fine"])
         
         rgb_stack = torch.stack(rgb_samples, dim=0)
         variance = rgb_stack.var(dim=0).mean().item()

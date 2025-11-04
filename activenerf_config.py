@@ -86,26 +86,6 @@ class ActiveNeRFModelConfig(ModelConfig):
 
 
 
-# ===== UNCERTAINTY RENDERER =====
-class UncertaintyRenderer:
-    """Renderer for uncertainty values"""
-    
-    def __call__(self, betas: Tensor, weights: Tensor) -> Tensor:
-        """
-        Render uncertainty from per-sample betas and weights.
-        
-        Args:
-            betas: Uncertainty values per sample [batch, num_samples, 1]
-            weights: Rendering weights [batch, num_samples, 1]
-            
-        Returns:
-            Rendered uncertainty [batch, 1]
-        """
-        # Weighted sum (similar to RGB rendering)
-        uncertainty = torch.sum(weights * betas, dim=-2)
-        return uncertainty
-
-
 # ===== MODELO =====
 class ActiveNeRFModel(Model):
     """
@@ -256,7 +236,7 @@ class ActiveNeRFModel(Model):
         depth_fine = self.renderer_depth(weights_fine, ray_samples_pdf)
         
         # ===== Uncertainty =====
-        uncert_field = field_outputs_fine[FieldHeadNames.UNCERTAINTY] + self.beta_min
+        uncert_field = field_outputs_fine[FieldHeadNames.UNCERTAINTY] #+ self.beta_min
         uncert_fine = self.renderer_unct(betas=uncert_field, weights=weights_fine)
         
         outputs = {

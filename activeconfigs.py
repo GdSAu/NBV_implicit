@@ -20,12 +20,12 @@ method_configs["activenerf"] = ActiveNeRFTrainerConfig(
     method_name="activenerf",
     
     # === Parámetros de ActiveNeRF (nuevos) ===
-    initial_views=4,                        # Número de vistas iniciales
+    initial_views=10,                        # Número de vistas iniciales
     views_per_iteration=1,                  # Vistas a añadir por iteración
-    steps_per_active_selection=50,        # Cada cuántos steps seleccionar
+    steps_per_active_selection=6000,        # Cada cuántos steps seleccionar
     uncertainty_method="entropy",           # "entropy", "variance", "ensemble"
     candidate_views_sampling=10,           # Candidatos a evaluar
-    max_views=None,                         # None = usar todas disponibles
+    max_views=50,                         # None = usar todas disponibles
     uncertainty_grid_resolution=128,        # Resolución para cálculo de incertidumbre
     
     # === Pipeline Configuration ===
@@ -33,8 +33,8 @@ method_configs["activenerf"] = ActiveNeRFTrainerConfig(
         datamanager=VanillaDataManagerConfig(
             _target=ActiveNeRFDataManager,  # <-- Usar DataManager customizado
             dataparser=BlenderDataParserConfig(),
-            train_num_rays_per_batch=4096,
-            eval_num_rays_per_batch=4096,
+            train_num_rays_per_batch=1024,
+            eval_num_rays_per_batch=1024, # 4096
         ),
         model=ActiveNeRFModelConfig(
             beta_min=0.01,
@@ -42,7 +42,9 @@ method_configs["activenerf"] = ActiveNeRFTrainerConfig(
             use_uncertainty=True,           # <-- ACTIVADO para ActiveNeRF
             # Parámetros específicos para incertidumbre
             enable_uncertainty_estimation=True,
-            uncertainty_method="density_variance",  # o "rgb_variance"
+            uncertainty_method="density_fine",  # "density" o "rgb_variance"
+            use_uncertainty_loss = False,
+            enable_entropy_regularization = False, 
         ),
     ),
     
@@ -71,8 +73,8 @@ method_configs["activenerf"] = ActiveNeRFTrainerConfig(
     # === Training Parameters ===
     max_num_iterations=200000,              # Total de iteraciones
     steps_per_save=10000,                   # Guardar checkpoints
-    steps_per_eval_batch=500,
-    steps_per_eval_image=500,
+    steps_per_eval_batch=1500,
+    steps_per_eval_image=1500,
     steps_per_eval_all_images=25000,
     
     # === Mixed Precision ===
