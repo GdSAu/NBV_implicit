@@ -236,7 +236,7 @@ class ActiveNeRFModel(Model):
         depth_fine = self.renderer_depth(weights_fine, ray_samples_pdf)
         
         # ===== Uncertainty =====
-        uncert_field = field_outputs_fine[FieldHeadNames.UNCERTAINTY] #+ self.beta_min
+        uncert_field = weights_fine + self.beta_min #field_outputs_fine[FieldHeadNames.UNCERTAINTY] + self.beta_min
         uncert_fine = self.renderer_unct(betas=uncert_field, weights=weights_fine)
         
         outputs = {
@@ -251,6 +251,59 @@ class ActiveNeRFModel(Model):
             "density_fine": field_outputs_fine[FieldHeadNames.DENSITY],  # Para análisis
         }
         return outputs
+    
+    def get_uncertainty(self, ray_bundle: RayBundle):
+
+        # ===== Uniform sampling =====
+        ray_samples_uniform = self.sampler_uniform(ray_bundle)
+        if self.temporal_distortion is not None:
+            offsets = None
+            if ray_samples_uniform.times is not None:
+                offsets = self.temporal_distortion(
+                    ray_samples_uniform.frustums.get_positions(), ray_samples_uniform.times
+                )
+            ray_samples_uniform.frustums.set_offsets(offsets)
+
+        # ===== Coarse field =====
+        field_outputs_coarse = self.field_coarse.forward(ray_samples_uniform)
+        if self.config.use_gradient_scaling:
+            field_outputs_coarse = scale_gradients_by_distance_squared(field_outputs_coarse, ray_samples_uniform)
+        
+        weights_coarse = ray_samples_uniform.get_weights(field_outputs_coarse[FieldHeadNames.DENSITY])
+
+        # ===== PDF sampling =====
+        ray_samples_pdf = self.sampler_pdf(ray_bundle, ray_samples_uniform, weights_coarse)
+        if self.temporal_distortion is not None:
+            offsets = None
+            if ray_samples_pdf.times is not None:
+                offsets = self.temporal_distortion(ray_samples_pdf.frustums.get_positions(), ray_samples_pdf.times)
+            ray_samples_pdf.frustums.set_offsets(offsets)
+
+
+        # ===== Fine field =====
+        field_outputs_fine = self.field_fine.forward(ray_samples_pdf)
+        if self.config.use_gradient_scaling:
+            field_outputs_fine = scale_gradients_by_distance_squared(field_outputs_fine, ray_samples_pdf)
+        
+        weights_fine = ray_samples_pdf.get_weights(field_outputs_fine[FieldHeadNames.DENSITY])
+
+        # ===== Uncertainty =====
+        uncert_field = weights_fine + self.beta_min #field_outputs_fine[FieldHeadNames.UNCERTAINTY] + self.beta_min
+        uncert_fine = self.renderer_unct(betas=uncert_field, weights=weights_fine)
+        prob = torch.sigmoid(uncert_fine)
+        entropy = -(prob * torch.log(prob + 1e-10) + (1 - prob) * torch.log(1 - prob + 1e-10))
+        uncertainty = entropy.mean().item()
+        del ray_samples_uniform, ray_samples_pdf
+        del field_outputs_coarse, field_outputs_fine
+        del weights_coarse, weights_fine, uncert_field
+        del uncert_fine, prob, entropy
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        outputs = {
+            "uncertainty_fine": uncertainty
+        }
+        return outputs
+
 
     def get_loss_dict(self, outputs, batch, metrics_dict=None) -> Dict[str, torch.Tensor]:
         """Compute losses including uncertainty regularization"""

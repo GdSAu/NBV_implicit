@@ -20,21 +20,22 @@ method_configs["activenerf"] = ActiveNeRFTrainerConfig(
     method_name="activenerf",
     
     # === Parámetros de ActiveNeRF (nuevos) ===
-    initial_views=10,                        # Número de vistas iniciales
+    initial_views=4,                        # Número de vistas iniciales
     views_per_iteration=1,                  # Vistas a añadir por iteración
     steps_per_active_selection=6000,        # Cada cuántos steps seleccionar
     uncertainty_method="entropy",           # "entropy", "variance", "ensemble"
-    candidate_views_sampling=10,           # Candidatos a evaluar
-    max_views=50,                         # None = usar todas disponibles
+    candidate_views_sampling=15,           # Candidatos a evaluar
+    max_views=None,                         # None = usar todas disponibles
     uncertainty_grid_resolution=128,        # Resolución para cálculo de incertidumbre
-    
+    ray_sample_min = 4096,   # Numero minimo de rayos
+
     # === Pipeline Configuration ===
     pipeline=VanillaPipelineConfig(
         datamanager=VanillaDataManagerConfig(
             _target=ActiveNeRFDataManager,  # <-- Usar DataManager customizado
             dataparser=BlenderDataParserConfig(),
-            train_num_rays_per_batch=1024,
-            eval_num_rays_per_batch=1024, # 4096
+            train_num_rays_per_batch=4096,
+            eval_num_rays_per_batch=4096, # 4096
         ),
         model=ActiveNeRFModelConfig(
             beta_min=0.01,
