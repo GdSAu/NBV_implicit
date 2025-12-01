@@ -17,17 +17,18 @@ from activetrainer import ActiveNeRFTrainerConfig
 method_configs: Dict[str, Union[ActiveNeRFTrainerConfig, ExternalMethodDummyTrainerConfig]] = {}
 
 method_configs["activenerf"] = ActiveNeRFTrainerConfig(
-    method_name="activenerf",
+    method_name="activenerf_start1view",
     
     # === Parámetros de ActiveNeRF (nuevos) ===
-    initial_views=4,                        # Número de vistas iniciales
+    initial_views=1,                        # Número de vistas iniciales
     views_per_iteration=1,                  # Vistas a añadir por iteración
-    steps_per_active_selection=6000,        # Cada cuántos steps seleccionar
+    steps_per_active_selection=20000,        # Cada cuántos steps seleccionar
     uncertainty_method="entropy",           # "entropy", "variance", "ensemble"
     candidate_views_sampling=15,           # Candidatos a evaluar
     max_views=None,                         # None = usar todas disponibles
+    ray_sample_min = 4096,                  # Numero minimo de rayos
     uncertainty_grid_resolution=128,        # Resolución para cálculo de incertidumbre
-    ray_sample_min = 4096,   # Numero minimo de rayos
+    
 
     # === Pipeline Configuration ===
     pipeline=VanillaPipelineConfig(
@@ -73,10 +74,10 @@ method_configs["activenerf"] = ActiveNeRFTrainerConfig(
     
     # === Training Parameters ===
     max_num_iterations=200000,              # Total de iteraciones
-    steps_per_save=10000,                   # Guardar checkpoints
+    steps_per_save=50000,                   # Guardar checkpoints
     steps_per_eval_batch=1500,
     steps_per_eval_image=1500,
-    steps_per_eval_all_images=25000,
+    steps_per_eval_all_images=50000,
     
     # === Mixed Precision ===
     mixed_precision=True,
@@ -110,7 +111,8 @@ method_configs["activenerf-variance"] = ActiveNeRFTrainerConfig(
     steps_per_active_selection=50,        # Más frecuente
     uncertainty_method="variance",          # Requiere múltiples forward passes
     candidate_views_sampling=10,            # Menos candidatos (es más lento)
-    
+    ray_sample_min = 4096,   # Numero minimo de rayos
+
     pipeline=VanillaPipelineConfig(
         datamanager=VanillaDataManagerConfig(
             _target=ActiveNeRFDataManager,
@@ -149,7 +151,8 @@ method_configs["activenerf-conservative"] = ActiveNeRFTrainerConfig(
     uncertainty_method="entropy",
     candidate_views_sampling=10,
     max_views=50,                           # Límite de vistas totales
-    
+    ray_sample_min = 4096,   # Numero minimo de rayos
+
     pipeline=VanillaPipelineConfig(
         datamanager=VanillaDataManagerConfig(
             _target=ActiveNeRFDataManager,
@@ -184,6 +187,7 @@ def create_activenerf_config(
     steps_per_selection: int = 500,
     uncertainty_method: str = "entropy",
     max_iterations: int = 200000,
+    ray_sample_min = 4096, 
     **kwargs
 ) -> ActiveNeRFTrainerConfig:
     """
@@ -204,7 +208,8 @@ def create_activenerf_config(
         steps_per_active_selection=steps_per_selection,
         uncertainty_method=uncertainty_method,
         max_num_iterations=max_iterations,
-        
+        ray_sample_min = ray_sample_min, 
+
         pipeline=VanillaPipelineConfig(
             datamanager=VanillaDataManagerConfig(
                 _target=ActiveNeRFDataManager,
