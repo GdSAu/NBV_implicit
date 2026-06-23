@@ -32,7 +32,7 @@ class ActiveNeRFTrainerConfig(TrainerConfig):
     uncertainty_method: Literal["entropy", "variance", "ensemble"] = "entropy"
     """Method to compute uncertainty for view selection"""
     
-    candidate_views_sampling: int = 100
+    candidate_views_sampling: int = 10
     """Number of candidate views to sample for selection"""
     
     max_views: Optional[int] = None
@@ -40,6 +40,9 @@ class ActiveNeRFTrainerConfig(TrainerConfig):
     
     uncertainty_grid_resolution: int = 128
     """Resolution of the grid for uncertainty estimation"""
+    
+    ray_sample_min: int = 4096
+    """Minimal number of rays requiered to compute uncertainties"""
 
 
 class ActiveNeRFTrainer(Trainer):
@@ -171,10 +174,15 @@ class ActiveNeRFTrainer(Trainer):
                         step=step
                     )
                 
+                if step > 0 and step_check(step, self.config.steps_per_eval_all_images):
+                    with self.train_lock:
+                        self._render_video(step)
+
                 # Evaluation
                 if self.pipeline.datamanager.eval_dataset:
                     with self.train_lock:
                         self.eval_iteration(step)
+                        
                 
                 # Checkpoint saving
                 if step_check(step, self.config.steps_per_save):
@@ -246,7 +254,7 @@ class ActiveNeRFTrainer(Trainer):
             scalar=max_uncertainty, 
             step=step
         )
-        
+        del uncertainties
         print(f"[ActiveNeRF] Step {step}: Added {num_to_select} views. "
               f"Total active views: {len(self.active_views)}/{len(self.active_views) + len(self.available_views)}")
     
@@ -262,57 +270,81 @@ class ActiveNeRFTrainer(Trainer):
         """
         self.pipeline.eval()
         uncertainties = []
+        batch_size = 4
+        
+        # Get the device from the model parameters
+        device = next(self.pipeline.model.parameters()).device
         
         with torch.no_grad():
-            for idx in candidate_indices:
-                # Get camera for this view
-                camera = self.pipeline.datamanager.train_dataset.cameras[int(idx)]
+            for i in range(0, len(candidate_indices), batch_size):
+                batch_indices = candidate_indices[i:i+batch_size]
                 
-                if self.config.uncertainty_method == "entropy":
-                    uncertainty = self._compute_entropy_uncertainty(camera)
-                elif self.config.uncertainty_method == "variance":
-                    uncertainty = self._compute_variance_uncertainty(camera)
-                elif self.config.uncertainty_method == "ensemble":
-                    uncertainty = self._compute_ensemble_uncertainty(camera)
-                else:
-                    raise ValueError(f"Unknown uncertainty method: {self.config.uncertainty_method}")
-                
-                uncertainties.append(uncertainty)
-        
+                for idx in batch_indices:
+                    # Get camera for this view
+                    camera = self.pipeline.datamanager.train_dataset.cameras[int(idx)].to(device)
+                    
+                    if self.config.uncertainty_method == "entropy":
+                        uncertainty = self._compute_entropy_uncertainty(camera, device)
+                    elif self.config.uncertainty_method == "variance":
+                        uncertainty = self._compute_variance_uncertainty(camera, device)
+                    elif self.config.uncertainty_method == "ensemble":
+                        uncertainty = self._compute_ensemble_uncertainty(camera, device)
+                    else:
+                        raise ValueError(f"Unknown uncertainty method: {self.config.uncertainty_method}")
+                    del camera
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    uncertainties.append(uncertainty)
+        # Final cache clear
         self.pipeline.train()
+        
         return np.array(uncertainties)
     
-    def _compute_entropy_uncertainty(self, camera) -> float:
+    def _compute_entropy_uncertainty(self, camera,device) -> float:
         """Compute entropy-based uncertainty for a camera view"""
-        # Render the view
-        camera_ray_bundle = camera.generate_rays(camera_indices=0)
+        # Render the view - don't specify camera_indices to avoid batch dimension issues
+        camera_ray_bundle = camera.generate_rays(camera_indices=0, keep_shape=False)
         
+        # Submuestrear rayos para reducir memoria
+        num_rays = camera_ray_bundle.shape[0]
+        sample_size = min(self.config.ray_sample_min, num_rays)  # Ajusta según tu GPU
+        indices = torch.randperm(num_rays, device=device)[:sample_size]
+        camera_ray_bundle = camera_ray_bundle[indices]
+        
+        camera_ray_bundle = camera_ray_bundle.to(device)
+        camera_ray_bundle = self.pipeline.model.collider(camera_ray_bundle)
+        ##Extra
+        camera_ray_bundle = self.pipeline.model.collider(camera_ray_bundle)
+
+        # Flatten ray bundle if needed (remove batch dimension)
+        if hasattr(camera_ray_bundle, 'flatten'):
+            camera_ray_bundle = camera_ray_bundle.flatten()
         # Get model outputs
-        outputs = self.pipeline.model(camera_ray_bundle)
-        
-        # Compute entropy from density/occupancy
-        if "density" in outputs:
-            density = outputs["density"]
-            # Normalize to probability
-            prob = torch.sigmoid(density)
-            entropy = -(prob * torch.log(prob + 1e-10) + (1 - prob) * torch.log(1 - prob + 1e-10))
-            uncertainty = entropy.mean().item()
-        else:
-            # Fallback: use RGB variance as proxy
-            rgb = outputs["rgb"]
-            uncertainty = rgb.var(dim=-1).mean().item()
-        
+        outputs = self.pipeline.model.get_uncertainty(camera_ray_bundle)
+        uncertainty = outputs["uncertainty_fine"]
+        # Limpiar explícitamente
+        del camera_ray_bundle, outputs
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
         return uncertainty
     
-    def _compute_variance_uncertainty(self, camera) -> float:
+    def _compute_variance_uncertainty(self, camera, device) -> float:
         """Compute variance-based uncertainty (requires multiple forward passes)"""
         num_samples = 5
-        camera_ray_bundle = camera.generate_rays(camera_indices=0)
+        camera_ray_bundle = camera.generate_rays(camera_indices=0, keep_shape=False)
+        
+        # Move ray bundle to device
+        camera_ray_bundle = camera_ray_bundle.to(device)
+        
+        # Flatten ray bundle if needed
+        if hasattr(camera_ray_bundle, 'flatten'):
+            camera_ray_bundle = camera_ray_bundle.flatten()
         
         rgb_samples = []
         for _ in range(num_samples):
             outputs = self.pipeline.model(camera_ray_bundle)
-            rgb_samples.append(outputs["rgb"])
+            rgb_samples.append(outputs["rgb_fine"])
         
         rgb_stack = torch.stack(rgb_samples, dim=0)
         variance = rgb_stack.var(dim=0).mean().item()
@@ -325,6 +357,156 @@ class ActiveNeRFTrainer(Trainer):
         # Placeholder implementation
         return self._compute_variance_uncertainty(camera)
     
+    def _render_cameras(self):
+        from nerfstudio.cameras.cameras import Cameras
+        
+        # Obtener cámaras de entrenamiento
+        train_cameras = self.pipeline.datamanager.train_dataset.cameras
+        
+        # Calcular el centro de la escena (punto al que miran las cámaras)
+        scene_center = torch.tensor([-0.3523,  0.1468,  0])  # Promedio de posiciones
+        
+        # Calcular radio apropiado (distancia promedio al centro)
+        avg_radius = 4.0
+        
+        print(f"Scene center: {scene_center}")
+        print(f"Average radius: {avg_radius}")
+        
+        # Funciones auxiliares
+        trans_t = lambda t : torch.Tensor([
+            [1,0,0,0],
+            [0,1,0,0],
+            [0,0,1,t],
+            [0,0,0,1]]).float()
+
+        rot_phi = lambda phi : torch.Tensor([
+            [1,0,0,0],
+            [0,np.cos(phi),-np.sin(phi),0],
+            [0,np.sin(phi), np.cos(phi),0],
+            [0,0,0,1]]).float()
+
+        rot_theta = lambda th : torch.Tensor([
+            [np.cos(th),0,-np.sin(th),0],
+            [0,1,0,0],
+            [np.sin(th),0, np.cos(th),0],
+            [0,0,0,1]]).float()
+        
+        def pose_spherical(theta, phi, radius, center):
+            c2w = trans_t(radius)
+            c2w = rot_phi(phi/180.*np.pi) @ c2w
+            c2w = rot_theta(theta/180.*np.pi) @ c2w
+            c2w = torch.Tensor(np.array([[-1,0,0,0],[0,0,1,0],[0,1,0,0],[0,0,0,1]])) @ c2w
+            # Trasladar al centro de la escena
+            c2w[:3, 3] += center
+            return c2w
+        
+        # Generar poses en espiral alrededor del centro
+        render_poses = torch.stack([
+            pose_spherical(angle, -30.0, avg_radius, scene_center) 
+            for angle in np.linspace(-180, 180, 40+1)[:-1]
+        ], 0)
+        
+        # Usar cámara de referencia para intrínsecos
+        ref_camera = train_cameras[0]
+        
+        # Crear objetos Camera para cada pose
+        spiral_cameras = []
+        for c2w in render_poses:
+            cam = Cameras(
+                camera_to_worlds=c2w[:3, :4].float().unsqueeze(0),
+                fx=ref_camera.fx,
+                fy=ref_camera.fy,
+                cx=ref_camera.cx,
+                cy=ref_camera.cy,
+                width=ref_camera.width,
+                height=ref_camera.height,
+                distortion_params=ref_camera.distortion_params,
+                camera_type=ref_camera.camera_type,
+            )
+            spiral_cameras.append(cam)       
+
+        return spiral_cameras
+
+    def _render_video(self, step):
+        import imageio.v3 as iio
+        import numpy as np
+        from pathlib import Path
+        import matplotlib.cm as cm
+
+        device = next(self.pipeline.model.parameters()).device
+
+        video_dir = self.base_dir / "videos"
+        video_dir.mkdir(exist_ok=True)
+
+        spiral_cameras = self._render_cameras()
+
+        rgb_frames, disp_frames, uncert_frames = [], [], []
+
+        CHUNK = 16384  # Si sigue haciendo OOM, baja a 8192, 4096, 2048 o 1024
+        print("Rendering video")
+        with torch.no_grad():
+            for i, camera in enumerate(spiral_cameras):
+                
+                camera = camera.to(device)
+                ray_bundle = camera.generate_rays(camera_indices=0, keep_shape=True)
+
+                rays_o = ray_bundle.origins.to(device).reshape(-1, 3)
+                rays_d = ray_bundle.directions.to(device).reshape(-1, 3)
+
+                N = rays_o.shape[0]
+
+                # Prepare outputs
+                rgb_full = []
+                depth_full = []
+                uncert_full = []
+
+                from nerfstudio.cameras.rays import RayBundle
+
+                for start in range(0, N, CHUNK):
+                    end = min(start + CHUNK, N)
+
+                    chunk = RayBundle(
+                        origins=rays_o[start:end],
+                        directions=rays_d[start:end],
+                        nears=torch.full((end-start, 1), self.pipeline.model.collider.near_plane, device=device),
+                        fars=torch.full((end-start, 1), self.pipeline.model.collider.far_plane, device=device),
+                        pixel_area=torch.ones((end-start, 1), device=device),
+                    )
+
+                    out = self.pipeline.model.get_outputs(chunk)
+
+                    rgb_full.append(out["rgb_fine"].cpu())
+                    depth_full.append(out["depth_fine"].cpu())
+                    uncert_full.append(out["uncertainty_fine"].cpu())
+
+                rgb = torch.cat(rgb_full, dim=0).reshape(camera.height, camera.width, 3).numpy()
+                depth = torch.cat(depth_full, dim=0).reshape(camera.height, camera.width).numpy()
+                uncert = torch.cat(uncert_full, dim=0).reshape(camera.height, camera.width).numpy()
+
+                disp = np.where(depth > 0, 1.0 / (depth + 1e-6), 0)
+
+                rgb_frames.append(rgb)
+                disp_frames.append(disp)
+                uncert_frames.append(uncert)
+
+        rgb_frames = self._to8b(np.stack(rgb_frames, axis=0))
+        disp_frames = self._to8b(np.stack(disp_frames, axis=0) / (np.max(disp_frames) + 1e-6))
+        uncert_frames = self._to8b(np.stack(uncert_frames, axis=0) / (np.max(uncert_frames) + 1e-6))
+
+        disp_frames = np.repeat(disp_frames[..., None], 3, axis=-1)
+        uncert_frames = self._to8b(cm.magma(uncert_frames*255))
+
+        moviebase = video_dir / f"spiral_{step:06d}_"
+        iio.imwrite(str(moviebase) + "rgb.mp4", rgb_frames, fps=30)
+        iio.imwrite(str(moviebase) + "disp.mp4", disp_frames, fps=30)
+        iio.imwrite(str(moviebase) + "uncert.mp4", uncert_frames, fps=30)
+
+        print(f"[Eval] Videos saved at step {step}")
+
+    def _to8b(self, x):
+        """Convierte array a uint8 en rango [0, 255]"""
+        return (255 * np.clip(x, 0, 1)).astype(np.uint8)
+        
     def save_checkpoint(self, step: int) -> None:
         """Save checkpoint with active view information"""
         super().save_checkpoint(step)
