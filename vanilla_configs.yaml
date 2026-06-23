@@ -1,0 +1,18 @@
+# configs/vanilla_nerf_local.yaml
+pipeline:
+  model:
+    type: VanillaModelConfig
+  datamanager:
+    dataparser:
+      type: BlenderDataParserConfig
+      data: /mnt/cc7c68c6-c81c-401d-91fd-04c40177514/ActiveNeRF/data/nerf_synthetic/lego/
+    train_num_rays_per_batch: 1024
+max_num_iterations: 2000  # ajusta para pruebas rápidas o reales
+mixed_precision: True
+depth_loss:
+  type: DS_NERF
+  force_pseudodepth: false
+vis: tensorboard
+logging:
+  relative_log_dir: ./logs
+output_dir: ./outputs
