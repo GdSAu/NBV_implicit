@@ -1,0 +1,1533 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Abstracto Gráfico: Pipeline de Aprendizaje de Pesos NeRF</title>
+    <!-- Google Fonts: Outfit and Fira Code for code blocks -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600&family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            /* Color Palette - Dark Mode Defaults */
+            --bg-primary: #0a0f1d;
+            --bg-secondary: #131b2e;
+            --bg-tertiary: #1b2641;
+            --text-primary: #f3f4f6;
+            --text-secondary: #9ca3af;
+            --accent-cyan: #06b6d4;
+            --accent-cyan-glow: rgba(6, 182, 212, 0.4);
+            --accent-orange: #f97316;
+            --accent-orange-glow: rgba(249, 115, 22, 0.4);
+            --accent-green: #10b981;
+            --accent-green-glow: rgba(16, 185, 129, 0.3);
+            --accent-purple: #8b5cf6;
+            --accent-purple-glow: rgba(139, 92, 246, 0.3);
+            
+            --border-color: rgba(255, 255, 255, 0.08);
+            --card-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+            --glass-bg: rgba(19, 27, 46, 0.7);
+            --glass-blur: blur(12px);
+            
+            --transition-speed: 0.3s;
+            --font-main: 'Outfit', sans-serif;
+            --font-code: 'Fira Code', monospace;
+        }
+
+        [data-theme="light"] {
+            --bg-primary: #f0f4f8;
+            --bg-secondary: #ffffff;
+            --bg-tertiary: #e2e8f0;
+            --text-primary: #0f172a;
+            --text-secondary: #475569;
+            --accent-cyan: #0891b2;
+            --accent-cyan-glow: rgba(8, 145, 178, 0.2);
+            --accent-orange: #ea580c;
+            --accent-orange-glow: rgba(234, 88, 12, 0.2);
+            --accent-green: #059669;
+            --accent-green-glow: rgba(5, 150, 105, 0.2);
+            --accent-purple: #7c3aed;
+            --accent-purple-glow: rgba(124, 58, 237, 0.2);
+            
+            --border-color: rgba(0, 0, 0, 0.08);
+            --card-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.08);
+            --glass-bg: rgba(255, 255, 255, 0.8);
+            --glass-blur: blur(12px);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            font-family: var(--font-main);
+            min-height: 100vh;
+            padding: 2rem 1.5rem;
+            transition: background-color var(--transition-speed), color var(--transition-speed);
+            overflow-x: hidden;
+        }
+
+        /* Container Layout */
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        /* Header Style */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 1.5rem;
+        }
+
+        .header-title h1 {
+            font-size: 2.2rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.5px;
+            margin-bottom: 0.25rem;
+        }
+
+        .header-title p {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            font-weight: 300;
+        }
+
+        /* Control Panel */
+        .controls {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .btn {
+            background: var(--glass-bg);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            padding: 0.6rem 1.2rem;
+            border-radius: 9999px;
+            font-family: var(--font-main);
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+            backdrop-filter: var(--glass-blur);
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px var(--accent-cyan-glow);
+            border-color: var(--accent-cyan);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-cyan));
+            color: #ffffff;
+            border: none;
+        }
+
+        .btn-primary:hover {
+            box-shadow: 0 4px 20px var(--accent-cyan-glow);
+            filter: brightness(1.1);
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, var(--accent-orange), var(--accent-orange));
+            color: #ffffff;
+            border: none;
+        }
+
+        .btn-secondary:hover {
+            box-shadow: 0 4px 20px var(--accent-orange-glow);
+            filter: brightness(1.1);
+        }
+
+        .theme-toggle {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--glass-bg);
+            border: 1px solid var(--border-color);
+            cursor: pointer;
+            transition: all var(--transition-speed);
+            color: var(--text-primary);
+        }
+
+        .theme-toggle:hover {
+            transform: rotate(15deg) scale(1.05);
+            border-color: var(--accent-purple);
+            box-shadow: 0 0 15px var(--accent-purple-glow);
+        }
+
+        /* Dashboard Layout */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        @media (max-width: 1024px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Glass Card */
+        .card {
+            background: var(--glass-bg);
+            backdrop-filter: var(--glass-blur);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            padding: 1.8rem;
+            box-shadow: var(--card-shadow);
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            transition: transform var(--transition-speed), border-color var(--transition-speed);
+        }
+
+        .card:hover {
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        .card-stage-1 {
+            border-top: 4px solid var(--accent-cyan);
+        }
+
+        .card-stage-2 {
+            border-top: 4px solid var(--accent-orange);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .stage-badge {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            font-weight: 800;
+            letter-spacing: 1px;
+            padding: 0.3rem 0.8rem;
+            border-radius: 9999px;
+            color: #ffffff;
+        }
+
+        .badge-cyan {
+            background-color: var(--accent-cyan);
+            box-shadow: 0 0 10px var(--accent-cyan-glow);
+        }
+
+        .badge-orange {
+            background-color: var(--accent-orange);
+            box-shadow: 0 0 10px var(--accent-orange-glow);
+        }
+
+        .card-title {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .card-subtitle {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            margin-top: 0.2rem;
+        }
+
+        /* Pipeline Visualizers */
+        .visualizer {
+            background: rgba(0, 0, 0, 0.15);
+            border-radius: 12px;
+            padding: 1.5rem;
+            flex-grow: 1;
+            min-height: 380px;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.03);
+        }
+
+        /* SVG Neural Network Representation */
+        .nn-svg {
+            width: 100%;
+            max-width: 400px;
+            height: 220px;
+            z-index: 1;
+        }
+
+        .nn-node {
+            transition: all 0.5s ease;
+            cursor: pointer;
+        }
+
+        .nn-node:hover {
+            fill: #ffffff !important;
+            filter: drop-shadow(0 0 8px var(--accent-cyan));
+        }
+
+        .nn-edge {
+            stroke-width: 1;
+            opacity: 0.25;
+            stroke-dasharray: 4 2;
+            animation: dash 15s linear infinite;
+        }
+
+        @keyframes dash {
+            to {
+                stroke-dashoffset: -100;
+            }
+        }
+
+        .nn-edge-active {
+            stroke: var(--accent-cyan);
+            stroke-width: 1.5;
+            opacity: 0.8;
+            stroke-dasharray: none;
+            animation: pulse-edge 1.5s infinite alternate;
+        }
+
+        @keyframes pulse-edge {
+            from { stroke-width: 1; opacity: 0.5; }
+            to { stroke-width: 2.5; opacity: 1; }
+        }
+
+        /* Simulation Overlays */
+        .sim-status {
+            position: absolute;
+            bottom: 12px;
+            left: 12px;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            font-family: var(--font-code);
+            background: rgba(0, 0, 0, 0.4);
+            padding: 0.3rem 0.8rem;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            z-index: 2;
+        }
+
+        /* Stage 1 Simulation details */
+        .dataset-visualizer {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+            justify-content: center;
+            max-width: 90%;
+        }
+
+        .camera-icon {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            transition: all var(--transition-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            position: relative;
+        }
+
+        .camera-icon.active {
+            background: var(--accent-cyan-glow);
+            border-color: var(--accent-cyan);
+            color: var(--text-primary);
+            transform: scale(1.15);
+            box-shadow: 0 0 10px var(--accent-cyan);
+        }
+
+        .camera-icon.nbv-candidate {
+            border-color: var(--accent-orange);
+            background: var(--accent-orange-glow);
+            animation: pulse-orange 1.5s infinite alternate;
+        }
+
+        @keyframes pulse-orange {
+            from { transform: scale(1); box-shadow: 0 0 5px var(--accent-orange-glow); }
+            to { transform: scale(1.1); box-shadow: 0 0 15px var(--accent-orange); }
+        }
+
+        /* Stanford Bunny SVG & Camera Ray Styles */
+        .bunny-cube {
+            stroke: var(--border-color);
+            fill: none;
+        }
+        .sim-camera {
+            transition: all var(--transition-speed);
+        }
+        .sim-camera.active rect, .sim-camera.active polygon {
+            stroke: var(--accent-cyan);
+            fill: var(--accent-cyan-glow);
+        }
+        .sim-camera.active .cam-lens {
+            fill: var(--accent-cyan);
+            opacity: 1;
+        }
+        .sim-camera.nbv-candidate rect, .sim-camera.nbv-candidate polygon {
+            stroke: var(--accent-orange);
+            fill: var(--accent-orange-glow);
+            animation: pulse-orange-cam 1.5s infinite alternate;
+        }
+        @keyframes pulse-orange-cam {
+            from { filter: drop-shadow(0 0 1px var(--accent-orange-glow)); }
+            to { filter: drop-shadow(0 0 8px var(--accent-orange)); }
+        }
+        .cam-ray {
+            stroke-dasharray: 4 4;
+            opacity: 0;
+            transition: opacity 0.5s ease;
+        }
+        .cam-ray.active {
+            opacity: 0.6;
+            animation: ray-flow 2s linear infinite;
+        }
+        @keyframes ray-flow {
+            to {
+                stroke-dashoffset: -20;
+            }
+        }
+
+        /* Metric chart overlay */
+        .metric-chart-container {
+            width: 100%;
+            height: 120px;
+            margin-top: 15px;
+            position: relative;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            padding: 8px;
+        }
+
+        .chart-label {
+            position: absolute;
+            top: 5px;
+            left: 8px;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+
+        .chart-threshold-line {
+            position: absolute;
+            width: 100%;
+            border-top: 1px dashed var(--accent-orange);
+            top: 40px; /* Represents 28dB */
+            left: 0;
+            z-index: 1;
+        }
+
+        .chart-threshold-label {
+            position: absolute;
+            right: 8px;
+            top: 25px;
+            font-size: 0.7rem;
+            color: var(--accent-orange);
+            background: var(--bg-primary);
+            padding: 1px 4px;
+            border-radius: 4px;
+            z-index: 2;
+        }
+
+        /* Stage 2 Feature Extractor Animations */
+        .feature-extraction-flow {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+            gap: 15px;
+        }
+
+        .flow-node {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 0.8rem 1rem;
+            text-align: center;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 80px;
+            position: relative;
+            transition: all var(--transition-speed);
+        }
+
+        .flow-node h4 {
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .flow-node p {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            font-family: var(--font-code);
+        }
+
+        .flow-node.active {
+            border-color: var(--accent-orange);
+            box-shadow: 0 0 15px var(--accent-orange-glow);
+            transform: scale(1.05);
+        }
+
+        .flow-arrow {
+            font-size: 1.5rem;
+            color: var(--text-secondary);
+            animation: arrow-move 1.5s infinite ease-in-out;
+        }
+
+        @keyframes arrow-move {
+            0% { transform: translateX(0); opacity: 0.5; }
+            50% { transform: translateX(5px); opacity: 1; }
+            100% { transform: translateX(0); opacity: 0.5; }
+        }
+
+        .weight-matrix-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 4px;
+            width: 45px;
+            height: 45px;
+            margin-bottom: 8px;
+        }
+
+        .matrix-cell {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+            transition: background var(--transition-speed);
+        }
+
+        .flow-node.active .matrix-cell {
+            background: var(--accent-orange);
+        }
+
+        /* Gram Schmidt orthogonalization visualizer */
+        .gs-container {
+            width: 100%;
+            height: 160px;
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            margin-top: 15px;
+            padding: 10px;
+        }
+
+        .vector-box {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .vector-box span {
+            font-size: 0.8rem;
+            font-family: var(--font-code);
+        }
+
+        .vector-arrow-svg {
+            width: 60px;
+            height: 60px;
+        }
+
+        /* Info Grid - Lower section */
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1.5fr 1fr;
+            gap: 2rem;
+            margin-top: 2rem;
+        }
+
+        @media (max-width: 1024px) {
+            .info-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Detail panel */
+        .detail-panel {
+            background: var(--glass-bg);
+            backdrop-filter: var(--glass-blur);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            padding: 1.8rem;
+            box-shadow: var(--card-shadow);
+        }
+
+        .detail-panel h3 {
+            font-size: 1.3rem;
+            margin-bottom: 1rem;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 0.5rem;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .tab-menu {
+            display: flex;
+            gap: 0.5rem;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+        }
+
+        .tab-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            padding: 0.4rem 0.8rem;
+            cursor: pointer;
+            font-family: var(--font-main);
+            font-size: 0.9rem;
+            font-weight: 600;
+            border-bottom: 2px solid transparent;
+            transition: all var(--transition-speed);
+        }
+
+        .tab-btn.active {
+            color: var(--accent-cyan);
+            border-bottom-color: var(--accent-cyan);
+        }
+
+        .tab-content {
+            display: none;
+            animation: fadeIn 0.4s ease;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Math terms styled nicely */
+        .math-block {
+            background: rgba(0, 0, 0, 0.2);
+            border-left: 3px solid var(--accent-purple);
+            padding: 0.8rem;
+            margin: 0.8rem 0;
+            border-radius: 0 8px 8px 0;
+            font-family: var(--font-code);
+            font-size: 0.9rem;
+            color: var(--text-primary);
+            overflow-x: auto;
+        }
+
+        /* Table design */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1rem;
+            font-size: 0.85rem;
+        }
+
+        th, td {
+            text-align: left;
+            padding: 0.6rem 0.8rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        th {
+            font-weight: 700;
+            color: var(--text-primary);
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        tr:hover {
+            background: rgba(255, 255, 255, 0.01);
+        }
+
+        /* Log window */
+        .log-window {
+            background: #050811;
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1rem;
+            height: 250px;
+            overflow-y: auto;
+            font-family: var(--font-code);
+            font-size: 0.8rem;
+            color: #38bdf8;
+            box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.8);
+        }
+
+        .log-entry {
+            margin-bottom: 0.4rem;
+            line-height: 1.4;
+            display: flex;
+            gap: 8px;
+        }
+
+        .log-time {
+            color: #64748b;
+            flex-shrink: 0;
+        }
+
+        .log-info { color: #38bdf8; }
+        .log-success { color: #34d399; }
+        .log-warn { color: #fbbf24; }
+        .log-err { color: #f87171; }
+
+        /* Tooltip style */
+        .tooltip {
+            position: absolute;
+            background: rgba(15, 23, 42, 0.9);
+            color: #ffffff;
+            padding: 0.5rem 0.8rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            pointer-events: none;
+            z-index: 100;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            max-width: 220px;
+            display: none;
+        }
+
+        /* Footer */
+        footer {
+            margin-top: 3rem;
+            text-align: center;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            border-top: 1px solid var(--border-color);
+            padding-top: 1.5rem;
+        }
+
+        /* Graph highlight connections */
+        .highlight-circle {
+            animation: circle-glow 1.5s infinite alternate;
+        }
+
+        @keyframes circle-glow {
+            from { stroke-width: 1.5; filter: drop-shadow(0 0 1px var(--accent-cyan)); }
+            to { stroke-width: 3; filter: drop-shadow(0 0 8px var(--accent-cyan)); }
+        }
+
+        .pulse-text {
+            animation: pulse-t 2s infinite alternate;
+        }
+
+        @keyframes pulse-t {
+            from { opacity: 0.7; }
+            to { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <div class="header-title">
+                <h1>NeRF Weight Learning Pipeline</h1>
+                <p>Abstracto Gráfico Interactivo de Entrenamiento Incremental y Regresión en Espacio de Pesos</p>
+            </div>
+            <div class="controls">
+                <button class="btn btn-primary" id="btn-play">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                    Simular Pipeline
+                </button>
+                <button class="btn" id="btn-reset">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path></svg>
+                    Reiniciar
+                </button>
+                <button class="theme-toggle" id="theme-toggle" aria-label="Alternar Tema">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="sun-icon"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- Dashboard Grid (2 Main Stages) -->
+        <div class="dashboard-grid">
+            
+            <!-- STAGE 1 CARD -->
+            <div class="card card-stage-1" id="card-stage1">
+                <div class="card-header">
+                    <div>
+                        <span class="stage-badge badge-cyan">Etapa 1</span>
+                        <h2 class="card-title">Entrenamiento Incremental</h2>
+                        <p class="card-subtitle">Registro temporal, convergencia y expansión del dataset</p>
+                    </div>
+                </div>
+                
+                <div class="visualizer" id="stage1-visualizer">
+                    <!-- Dataset Visualizer: Views D_t -->
+                    <div class="dataset-visualizer" id="dataset-views">
+                        <div class="camera-icon active" data-view="0" title="Vista Inicial 1">📷0</div>
+                        <div class="camera-icon active" data-view="1" title="Vista Inicial 2">📷1</div>
+                        <div class="camera-icon active" data-view="2" title="Vista Inicial 3">📷2</div>
+                        <div class="camera-icon active" data-view="3" title="Vista Inicial 4">📷3</div>
+                        <div class="camera-icon" data-view="4" title="Next Best View 1 (Pendiente)">📷4</div>
+                        <div class="camera-icon" data-view="5" title="Next Best View 2 (Pendiente)">📷5</div>
+                        <div class="camera-icon" data-view="6" title="Next Best View 3 (Pendiente)">📷6</div>
+                        <div class="camera-icon" data-view="7" title="Next Best View 4 (Pendiente)">📷7</div>
+                    </div>
+
+                    <!-- SVG of the Stanford Bunny Bounding Box & Camera Ray Simulator -->
+                    <svg class="nn-svg" id="nerf-net-svg" viewBox="0 0 400 200">
+                        <defs>
+                            <!-- Reusable Camera Symbol pointing right -->
+                            <g id="svg-camera-symbol">
+                                <rect x="-10" y="-7" width="16" height="14" rx="2" fill="var(--bg-tertiary)" stroke="var(--text-secondary)" stroke-width="1.5" />
+                                <polygon points="6,-4 12,-7 12,7 6,4" fill="var(--bg-tertiary)" stroke="var(--text-secondary)" stroke-width="1.5" />
+                                <circle cx="-2" cy="0" r="3" fill="var(--accent-cyan)" opacity="0.3" class="cam-lens" />
+                            </g>
+                        </defs>
+
+                        <!-- 3D Bounding Box Wireframe -->
+                        <!-- Back Face -->
+                        <rect x="140" y="50" width="100" height="90" fill="none" stroke="var(--border-color)" stroke-dasharray="2 2" stroke-width="1.2" />
+                        <!-- Connection Lines -->
+                        <line x1="140" y1="50" x2="160" y2="70" stroke="var(--border-color)" stroke-width="1.2" stroke-dasharray="2 2" />
+                        <line x1="240" y1="50" x2="260" y2="70" stroke="var(--border-color)" stroke-width="1.2" stroke-dasharray="2 2" />
+                        <line x1="140" y1="140" x2="160" y2="160" stroke="var(--border-color)" stroke-width="1.2" stroke-dasharray="2 2" />
+                        <line x1="240" y1="140" x2="260" y2="160" stroke="var(--border-color)" stroke-width="1.2" stroke-dasharray="2 2" />
+
+                        <!-- Stanford Bunny silhouette (glowing neon) -->
+                        <g transform="translate(0, 12)">
+                            <path d="M 195 138 C 175 138 167 130 167 118 C 167 112 171 106 175 102 C 171 90 163 74 159 54 C 157 42 159 26 165 18 C 170 11 176 11 178 18 C 181 26 181 46 180 58 C 184 42 190 22 196 16 C 201 11 206 13 206 21 C 206 33 202 53 196 69 C 208 77 224 93 228 105 C 232 117 228 130 220 134 C 212 138 204 138 195 138 Z" fill="rgba(6, 182, 212, 0.12)" stroke="var(--accent-cyan)" stroke-width="2" id="bunny-silhouette" style="filter: drop-shadow(0 0 6px var(--accent-cyan)); cursor: pointer;" />
+                        </g>
+
+                        <!-- Front Face -->
+                        <rect x="160" y="70" width="100" height="90" fill="none" stroke="var(--border-color)" stroke-width="1.5" />
+
+                        <!-- Camera Rays (connecting to bunny center 200, 110) -->
+                        <line x1="80" y1="45" x2="200" y2="110" class="cam-ray active" id="svg-ray-0" stroke="var(--accent-cyan)" stroke-width="1.2" />
+                        <line x1="320" y1="45" x2="200" y2="110" class="cam-ray active" id="svg-ray-1" stroke="var(--accent-cyan)" stroke-width="1.2" />
+                        <line x1="80" y1="165" x2="200" y2="110" class="cam-ray active" id="svg-ray-2" stroke="var(--accent-cyan)" stroke-width="1.2" />
+                        <line x1="320" y1="165" x2="200" y2="110" class="cam-ray active" id="svg-ray-3" stroke="var(--accent-cyan)" stroke-width="1.2" />
+                        <line x1="50" y1="105" x2="200" y2="110" class="cam-ray" id="svg-ray-4" stroke="var(--accent-cyan)" stroke-width="1.2" />
+                        <line x1="350" y1="105" x2="200" y2="110" class="cam-ray" id="svg-ray-5" stroke="var(--accent-cyan)" stroke-width="1.2" />
+                        <line x1="200" y1="20" x2="200" y2="110" class="cam-ray" id="svg-ray-6" stroke="var(--accent-cyan)" stroke-width="1.2" />
+                        <line x1="200" y1="190" x2="200" y2="110" class="cam-ray" id="svg-ray-7" stroke="var(--accent-cyan)" stroke-width="1.2" />
+
+                        <!-- Reusable Cameras placed around the scene -->
+                        <!-- Initial Cameras (Active) -->
+                        <use href="#svg-camera-symbol" x="80" y="45" transform="rotate(27, 80, 45)" class="sim-camera active" id="svg-cam-0" title="Vista 0" />
+                        <use href="#svg-camera-symbol" x="320" y="45" transform="rotate(153, 320, 45)" class="sim-camera active" id="svg-cam-1" title="Vista 1" />
+                        <use href="#svg-camera-symbol" x="80" y="165" transform="rotate(-27, 80, 165)" class="sim-camera active" id="svg-cam-2" title="Vista 2" />
+                        <use href="#svg-camera-symbol" x="320" y="165" transform="rotate(-153, 320, 165)" class="sim-camera active" id="svg-cam-3" title="Vista 3" />
+                        
+                        <!-- Next Best View Candidate Cameras (Initially Inactive) -->
+                        <use href="#svg-camera-symbol" x="50" y="105" transform="rotate(0, 50, 105)" class="sim-camera" id="svg-cam-4" title="NBV Vista 4" />
+                        <use href="#svg-camera-symbol" x="350" y="105" transform="rotate(180, 350, 105)" class="sim-camera" id="svg-cam-5" title="NBV Vista 5" />
+                        <use href="#svg-camera-symbol" x="200" y="20" transform="rotate(90, 200, 20)" class="sim-camera" id="svg-cam-6" title="NBV Vista 6" />
+                        <use href="#svg-camera-symbol" x="200" y="190" transform="rotate(-90, 200, 190)" class="sim-camera" id="svg-cam-7" title="NBV Vista 7" />
+
+                        <!-- Center Label -->
+                        <text x="200" y="180" fill="var(--text-secondary)" font-size="10" font-family="var(--font-main)" text-anchor="middle" font-weight="bold">Stanford Bunny (INR Box)</text>
+                    </svg>
+
+                    <!-- Realtime PSNR Chart -->
+                    <div class="metric-chart-container">
+                        <div class="chart-label">PSNR de Entrenamiento (dB)</div>
+                        <div class="chart-threshold-line"></div>
+                        <div class="chart-threshold-label">Umbral de Convergencia (28 dB)</div>
+                        <canvas id="psnr-canvas" width="400" height="90" style="width: 100%; height: 90px;"></canvas>
+                    </div>
+
+                    <div class="sim-status" id="stage1-status">Estado: Listo para simular</div>
+                </div>
+            </div>
+
+            <!-- STAGE 2 CARD -->
+            <div class="card card-stage-2" id="card-stage2">
+                <div class="card-header">
+                    <div>
+                        <span class="stage-badge badge-orange">Etapa 2</span>
+                        <h2 class="card-title">Meta-Modelo en Espacio de Pesos</h2>
+                        <p class="card-subtitle">Extractor de estadísticas y regresión hacia pose de NBV</p>
+                    </div>
+                </div>
+                
+                <div class="visualizer" id="stage2-visualizer">
+                    <!-- Feature Extraction Flow -->
+                    <div class="feature-extraction-flow">
+                        <!-- Node 1: Checkpoints -->
+                        <div class="flow-node" id="node-ckpt" title="Checkpoints (.ckpt)">
+                            <div class="weight-matrix-grid">
+                                <div class="matrix-cell"></div><div class="matrix-cell"></div><div class="matrix-cell"></div>
+                                <div class="matrix-cell"></div><div class="matrix-cell"></div><div class="matrix-cell"></div>
+                                <div class="matrix-cell"></div><div class="matrix-cell"></div><div class="matrix-cell"></div>
+                            </div>
+                            <h4>Pesos MLP</h4>
+                            <p>W_t &in; R^D</p>
+                        </div>
+                        
+                        <div class="flow-arrow">&rarr;</div>
+
+                        <!-- Node 2: Feature Extractor -->
+                        <div class="flow-node" id="node-features" title="Estadísticas de Capa">
+                            <h4 style="color: var(--accent-orange)">Extractor</h4>
+                            <p style="font-size: 0.7rem; line-height: 1.2">Media (&mu;)<br>Varianza (&sigma;²)<br>Sparsity / SVD</p>
+                        </div>
+
+                        <div class="flow-arrow">&rarr;</div>
+
+                        <!-- Node 3: Meta-Model MLP -->
+                        <div class="flow-node" id="node-meta" title="Meta-Modelo (MLP Secundario)">
+                            <div style="font-size: 1.5rem; margin-bottom: 4px;">🧠</div>
+                            <h4>Meta-MLP</h4>
+                            <p>Inferencia</p>
+                        </div>
+
+                        <div class="flow-arrow">&rarr;</div>
+
+                        <!-- Node 4: Predicted Pose -->
+                        <div class="flow-node" id="node-prediction" title="Predicción de Pose NBV">
+                            <div style="font-size: 1.5rem; margin-bottom: 4px; color: var(--accent-orange)">🎥</div>
+                            <h4>Pose NBV</h4>
+                            <p>t &in; R^3, R &in; SO(3)</p>
+                        </div>
+                    </div>
+
+                    <!-- Gram Schmidt orthogonalization interactive visualizer -->
+                    <div class="gs-container">
+                        <div class="vector-box">
+                            <span>Input 6D (v1, v2)</span>
+                            <svg class="vector-arrow-svg" id="gs-svg-in">
+                                <line x1="30" y1="50" x2="30" y2="10" stroke="var(--text-secondary)" stroke-width="2.5" marker-end="url(#arrow)"></line>
+                                <line x1="30" y1="50" x2="55" y2="35" stroke="var(--text-secondary)" stroke-width="2.5" marker-end="url(#arrow)"></line>
+                                <circle cx="30" cy="50" r="3" fill="var(--text-primary)"></circle>
+                            </svg>
+                            <span style="font-size: 0.7rem; color: var(--text-secondary)">No Ortogonal</span>
+                        </div>
+                        <div style="font-size: 1.2rem; color: var(--accent-purple)">&rArr;<br><span style="font-size: 0.6rem; font-family: var(--font-code)">GS Solver</span></div>
+                        <div class="vector-box">
+                            <span style="color: var(--accent-orange)">Orthogonal R &in; SO(3)</span>
+                            <svg class="vector-arrow-svg" id="gs-svg-out">
+                                <line x1="30" y1="50" x2="30" y2="10" stroke="var(--accent-orange)" stroke-width="2.5"></line>
+                                <line x1="30" y1="50" x2="55" y2="50" stroke="var(--accent-cyan)" stroke-width="2.5"></line>
+                                <!-- z axis out of page representation -->
+                                <circle cx="30" cy="50" r="6" stroke="var(--accent-purple)" stroke-width="2" fill="none"></circle>
+                                <circle cx="30" cy="50" r="1.5" fill="var(--accent-purple)"></circle>
+                                <circle cx="30" cy="50" r="3" fill="var(--text-primary)"></circle>
+                            </svg>
+                            <span style="font-size: 0.7rem; color: var(--accent-orange)">[R_col1, R_col2, R_col3]</span>
+                        </div>
+                    </div>
+
+                    <div class="sim-status" id="stage2-status">Estado: Esperando datos de checkpoints</div>
+                </div>
+            </div>
+
+        </div> <!-- End Dashboard Grid -->
+
+        <!-- Info Grid (Bottom Details & Logs) -->
+        <div class="info-grid">
+            
+            <!-- Left Info Panel (Math & Details Tabs) -->
+            <div class="detail-panel">
+                <h3>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                    Especificaciones Técnicas del Proyecto
+                </h3>
+                
+                <div class="tab-menu">
+                    <button class="tab-btn active" data-tab="tab-stage1">Bucle Incremental</button>
+                    <button class="tab-btn" data-tab="tab-extraction">Extracción de Pesos</button>
+                    <button class="tab-btn" data-tab="tab-metamodel">Meta-Modelo Loss</button>
+                    <button class="tab-btn" data-tab="tab-comparison">Comparativa Métodos</button>
+                </div>
+
+                <!-- Tab 1: Incremental Loop details -->
+                <div class="tab-content active" id="tab-stage1">
+                    <p style="margin-bottom: 0.8rem; font-size: 0.95rem; line-height: 1.5;">
+                        La <strong>Etapa 1</strong> realiza un entrenamiento incremental condicional sobre <strong>Nerfacto (Nerfstudio)</strong>. 
+                        El dataset activo inicial $D_t$ se expande secuencialmente con imágenes obtenidas desde la pose de la 
+                        <strong>Next Best View (NBV)</strong> cuando el modelo alcanza la convergencia.
+                    </p>
+                    <p style="margin-bottom: 0.8rem; font-size: 0.95rem; font-weight: bold; color: var(--accent-cyan);">
+                        Algoritmo de Control:
+                    </p>
+                    <ul style="margin-left: 1.5rem; margin-bottom: 1rem; font-size: 0.9rem; line-height: 1.5;">
+                        <li>Evaluar PSNR promedio sobre $D_t$ en cada época.</li>
+                        <li>Si $\text{PSNR}_{\text{promedio}} > \text{Umbral}$ (ej. 28 dB):
+                            <ul style="margin-left: 1rem; margin-top: 0.2rem;">
+                                <li>Guardar checkpoint: <code style="font-family: var(--font-code); color: var(--accent-orange)">pesos_historico/model_t_{iter}.ckpt</code></li>
+                                <li>Obtener pose NBV externa desde <code style="font-family: var(--font-code); color: var(--accent-orange)">next_nbv.json</code></li>
+                                <li>Actualizar Dataset: $D_{t+1} = D_t \cup \{\text{Imagen}_{\text{NBV}}\}$</li>
+                                <li>Reanudar el entrenamiento cargando el checkpoint previo (<code style="font-family: var(--font-code);">--load-dir</code>)</li>
+                            </ul>
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- Tab 2: Feature Extraction details -->
+                <div class="tab-content" id="tab-extraction">
+                    <p style="margin-bottom: 0.8rem; font-size: 0.95rem; line-height: 1.5;">
+                        Para realizar análisis de pesos robustos a la <strong>simetría de permutación</strong> de las redes neuronales, el extractor 
+                        <code style="font-family: var(--font-code);">extract_features.py</code> reduce los pesos de las capas de la MLP de Nerfacto a estadísticas invariantes por capa:
+                    </p>
+                    <div class="math-block">
+                        Estadísticas = { Mean(&mu;), Variance(&sigma;²), Sparsity(S), L1 & L2 Norms, Top-5 Singular Values (SVD) }
+                    </div>
+                    <p style="font-size: 0.95rem; line-height: 1.5;">
+                        Al usar estadísticas a nivel de capa, garantizamos que si se permutan los nodos (neuronas) dentro de las capas ocultas de la NeRF, el vector de características resultante para el Meta-Modelo se mantiene constante, simplificando drásticamente el espacio de búsqueda.
+                    </p>
+                </div>
+
+                <!-- Tab 3: Meta-Model Loss details -->
+                <div class="tab-content" id="tab-metamodel">
+                    <p style="margin-bottom: 0.8rem; font-size: 0.95rem; line-height: 1.5;">
+                        El Meta-Modelo es una red MLP secundaria entrenada para predecir la traslación $\hat{\mathbf{t}} \in \mathbb{R}^3$ y la rotación continua 6D $\hat{\mathbf{r}} \in \mathbb{R}^6$ (Zhou et al., CVPR 2019) de la pose de Next Best View (NBV) a partir de la trayectoria de pesos.
+                    </p>
+                    <p style="font-size: 0.9rem; margin-bottom: 0.5rem; font-weight: bold; color: var(--accent-orange);">
+                        Ortogonalización de Gram-Schmidt para SO(3):
+                    </p>
+                    <div class="math-block" style="font-size: 0.8rem;">
+                        x_1 = v_1 / ||v_1|| <br>
+                        x_2 = (v_2 - (x_1 &bull; v_2) x_1) / ||v_2 - (x_1 &bull; v_2) x_1|| <br>
+                        x_3 = x_1 &times; x_2 <br>
+                        R = [x_1, x_2, x_3] &in; SO(3)
+                    </div>
+                    <p style="font-size: 0.9rem; margin-bottom: 0.5rem; font-weight: bold; color: var(--accent-purple);">
+                        Función de Pérdida Compuesta del Meta-Modelo:
+                    </p>
+                    <div class="math-block">
+                        L = MSE(t_hat, t_gt) + &lambda; &bull; arccos( (Trace(R_hat^T &bull; R_gt) - 1) / 2 )
+                    </div>
+                </div>
+
+                <!-- Tab 4: Comparison Table -->
+                <div class="tab-content" id="tab-comparison">
+                    <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 0.5rem;">
+                        Comparación de arquitecturas para el aprendizaje en el espacio de pesos:
+                    </p>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Método</th>
+                                <th>Permutación</th>
+                                <th>Complejidad</th>
+                                <th>Pros y Contras</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>MLP Plano (Baseline)</strong></td>
+                                <td>🔴 No respetada</td>
+                                <td>Muy baja</td>
+                                <td>Fácil, pero propenso a sobreajuste por alta dimensionalidad.</td>
+                            </tr>
+                            <tr>
+                                <td style="color: var(--accent-cyan)"><strong>Estadísticas Capa (Híbrido)</strong></td>
+                                <td>🟢 Respetada</td>
+                                <td>Baja</td>
+                                <td>Ligero y robusto, pero puede perder detalles estructurales.</td>
+                            </tr>
+                            <tr>
+                                <td><strong>DWSNets (NFNs)</strong></td>
+                                <td>🟢 Equivarianza</td>
+                                <td>Alta</td>
+                                <td>Estado del arte matemático; complejo y restrictivo.</td>
+                            </tr>
+                            <tr>
+                                <td><strong>LSTMs / Temporal</strong></td>
+                                <td>🟢 Respetada*</td>
+                                <td>Media</td>
+                                <td>Analiza la dinámica temporal del entrenamiento del NeRF.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Right Info Panel (Live Execution Logs) -->
+            <div class="card" style="padding: 1.8rem;">
+                <h3 style="font-size: 1.3rem; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem; display: flex; align-items: center; justify-content: space-between;">
+                    <span>Registro de Ejecución en Tiempo Real</span>
+                    <span style="font-size: 0.75rem; font-family: var(--font-code); color: var(--accent-cyan);" id="pipeline-epoch-counter">Paso: 0 | Época: 0</span>
+                </h3>
+                <div class="log-window" id="log-console">
+                    <div class="log-entry"><span class="log-time">[02:50:58]</span><span class="log-info">Sistema inicializado. Listo para comenzar la simulación del pipeline.</span></div>
+                    <div class="log-entry"><span class="log-time">[02:51:00]</span><span class="log-info">Cargando escena base con 4 imágenes activas (D_0).</span></div>
+                </div>
+            </div>
+
+        </div> <!-- End Info Grid -->
+
+        <!-- Footer -->
+        <footer>
+            <p>Proyecto NBV_implicit - Análisis Temporal de Pesos en NeRFs &bull; Creado en 2026</p>
+        </footer>
+    </div>
+
+    <!-- Tooltip Element -->
+    <div class="tooltip" id="svg-tooltip">Tooltip</div>
+
+    <!-- SVG Markers for Vectors -->
+    <svg width="0" height="0">
+        <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--text-secondary)"></path>
+            </marker>
+        </defs>
+    </svg>
+
+    <script>
+        // Theme Toggle Logic
+        const themeToggleBtn = document.getElementById('theme-toggle');
+        themeToggleBtn.addEventListener('click', () => {
+            const currentTheme = document.documentElement.getAttribute('data-theme');
+            const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+            document.documentElement.setAttribute('data-theme', newTheme);
+            themeToggleBtn.querySelector('svg').style.transform = newTheme === 'light' ? 'rotate(180deg)' : 'rotate(0deg)';
+        });
+
+        // Tab Navigation Logic
+        const tabBtns = document.querySelectorAll('.tab-btn');
+        const tabContents = document.querySelectorAll('.tab-content');
+        
+        tabBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const targetTab = btn.getAttribute('data-tab');
+                
+                tabBtns.forEach(b => b.classList.remove('active'));
+                tabContents.forEach(c => c.classList.remove('active'));
+                
+                btn.classList.add('active');
+                document.getElementById(targetTab).classList.add('active');
+            });
+        });
+
+        // Tooltip for SVG elements
+        const tooltip = document.getElementById('svg-tooltip');
+        const nodes = document.querySelectorAll('.nn-node');
+        
+        nodes.forEach(node => {
+            node.addEventListener('mouseover', (e) => {
+                const desc = node.getAttribute('data-desc');
+                tooltip.innerHTML = `<strong>${desc}</strong><br>Haga clic para simular perturbación.`;
+                tooltip.style.display = 'block';
+                tooltip.style.left = (e.pageX + 10) + 'px';
+                tooltip.style.top = (e.pageY - 15) + 'px';
+                
+                // Highlight connected edges
+                highlightEdges(node.id, true);
+            });
+
+            node.addEventListener('mousemove', (e) => {
+                tooltip.style.left = (e.pageX + 10) + 'px';
+                tooltip.style.top = (e.pageY - 15) + 'px';
+            });
+
+            node.addEventListener('mouseout', () => {
+                tooltip.style.display = 'none';
+                highlightEdges(node.id, false);
+            });
+
+            node.addEventListener('click', () => {
+                addLog(`Perturbación aplicada a node ${node.id}. Observando varianza de pesos...`, 'warn');
+                node.style.transform = 'scale(1.3)';
+                setTimeout(() => node.style.transform = 'none', 300);
+            });
+        });
+
+        function highlightEdges(nodeId, highlight) {
+            // Very basic matching based on spatial coordinates/ids
+            const edges = document.querySelectorAll('.nn-edge');
+            edges.forEach(edge => {
+                // Find if edge touches the node
+                // (In a more complex layout we would inspect x1/y1 or x2/y2 coordinates)
+                edge.style.strokeWidth = highlight ? "1.5px" : "1px";
+                edge.style.opacity = highlight ? "0.6" : "0.25";
+                if (highlight) {
+                    edge.style.stroke = "var(--accent-cyan)";
+                } else {
+                    edge.style.stroke = "var(--text-secondary)";
+                }
+            });
+        }
+
+        // Live Log Helpers
+        const consoleEl = document.getElementById('log-console');
+        function addLog(message, type = 'info') {
+            const now = new Date();
+            const timeStr = now.toTimeString().split(' ')[0];
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            
+            let typeClass = 'log-info';
+            if (type === 'success') typeClass = 'log-success';
+            if (type === 'warn') typeClass = 'log-warn';
+            if (type === 'err') typeClass = 'log-err';
+            
+            entry.innerHTML = `<span class="log-time">[${timeStr}]</span><span class="${typeClass}">${message}</span>`;
+            consoleEl.appendChild(entry);
+            consoleEl.scrollTop = consoleEl.scrollHeight;
+        }
+
+        // PSNR Chart Simulation
+        const canvas = document.getElementById('psnr-canvas');
+        const ctx = canvas.getContext('2d');
+        let psnrData = [15.2, 17.5, 19.8, 22.0];
+        let maxDataPoints = 30;
+
+        function drawChart(currentPsnr = null) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            const w = canvas.width;
+            const h = canvas.height;
+            const thresholdY = h - (28 / 35) * h; // threshold at 28dB out of 35 max
+
+            // Draw grid
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+            ctx.lineWidth = 1;
+            for (let i = 1; i <= 3; i++) {
+                let gridY = (h / 4) * i;
+                ctx.beginPath();
+                ctx.moveTo(0, gridY);
+                ctx.lineTo(w, gridY);
+                ctx.stroke();
+            }
+
+            // Draw line
+            if (psnrData.length < 2) return;
+            
+            ctx.strokeStyle = 'var(--accent-cyan)';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            
+            const stepX = w / (maxDataPoints - 1);
+            
+            psnrData.forEach((val, idx) => {
+                // map val (10dB - 35dB) to height
+                const normalizedVal = (val - 10) / (35 - 10);
+                const x = idx * stepX;
+                const y = h - (normalizedVal * h * 0.8 + h * 0.1);
+                
+                if (idx === 0) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
+            });
+            ctx.stroke();
+
+            // Gradient fill under the curve
+            const gradient = ctx.createLinearGradient(0, 0, 0, h);
+            gradient.addColorStop(0, 'rgba(6, 182, 212, 0.25)');
+            gradient.addColorStop(1, 'rgba(6, 182, 212, 0)');
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.moveTo(0, h);
+            psnrData.forEach((val, idx) => {
+                const normalizedVal = (val - 10) / (35 - 10);
+                const x = idx * stepX;
+                const y = h - (normalizedVal * h * 0.8 + h * 0.1);
+                ctx.lineTo(x, y);
+            });
+            ctx.lineTo((psnrData.length - 1) * stepX, h);
+            ctx.closePath();
+            ctx.fill();
+
+            // Draw current point pulse
+            if (currentPsnr !== null) {
+                const lastIdx = psnrData.length - 1;
+                const lastVal = psnrData[lastIdx];
+                const normalizedVal = (lastVal - 10) / (35 - 10);
+                const x = lastIdx * stepX;
+                const y = h - (normalizedVal * h * 0.8 + h * 0.1);
+                
+                ctx.fillStyle = 'var(--accent-cyan)';
+                ctx.beginPath();
+                ctx.arc(x, y, 5, 0, 2 * Math.PI);
+                ctx.fill();
+                
+                ctx.strokeStyle = 'var(--accent-cyan)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.arc(x, y, 9 + Math.sin(Date.now() / 100) * 3, 0, 2 * Math.PI);
+                ctx.stroke();
+            }
+        }
+
+        drawChart();
+
+        // Pipeline Simulation Runner
+        let simulationInterval = null;
+        let isSimulating = false;
+        let simStep = 0;
+        let currentPsnr = 15.0;
+        let datasetCount = 4;
+        let activeNbvCamIdx = 4;
+        let epoch = 0;
+
+        const btnPlay = document.getElementById('btn-play');
+        const btnReset = document.getElementById('btn-reset');
+        
+        btnPlay.addEventListener('click', () => {
+            if (isSimulating) {
+                pauseSimulation();
+            } else {
+                startSimulation();
+            }
+        });
+
+        btnReset.addEventListener('click', () => {
+            resetSimulation();
+        });
+
+        function startSimulation() {
+            isSimulating = true;
+            btnPlay.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg> Pausar Simulación`;
+            addLog("Iniciando bucle de simulación...", "success");
+            
+            simulationInterval = setInterval(() => {
+                runSimulationStep();
+            }, 700);
+        }
+
+        function pauseSimulation() {
+            isSimulating = false;
+            btnPlay.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> Reanudar`;
+            clearInterval(simulationInterval);
+            addLog("Simulación pausada por el usuario.", "warn");
+        }
+
+        function resetSimulation() {
+            isSimulating = false;
+            clearInterval(simulationInterval);
+            btnPlay.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> Simular Pipeline`;
+            
+            simStep = 0;
+            epoch = 0;
+            currentPsnr = 15.0;
+            datasetCount = 4;
+            activeNbvCamIdx = 4;
+            psnrData = [15.2, 17.5, 19.8, 22.0];
+            
+            // Reset UI cameras
+            const cams = document.querySelectorAll('.camera-icon');
+            cams.forEach(cam => {
+                const idx = parseInt(cam.getAttribute('data-view'));
+                if (idx < 4) {
+                    cam.className = 'camera-icon active';
+                } else {
+                    cam.className = 'camera-icon';
+                }
+            });
+
+            // Reset SVG cameras and rays
+            for (let i = 0; i < 8; i++) {
+                const cam = document.getElementById(`svg-cam-${i}`);
+                const ray = document.getElementById(`svg-ray-${i}`);
+                if (cam) cam.setAttribute('class', 'sim-camera ' + (i < 4 ? 'active' : ''));
+                if (ray) ray.setAttribute('class', 'cam-ray ' + (i < 4 ? 'active' : ''));
+            }
+
+            // Reset Flow nodes
+            document.querySelectorAll('.flow-node').forEach(node => node.classList.remove('active'));
+            
+            // Reset statuses
+            document.getElementById('stage1-status').innerText = "Estado: Listo para simular";
+            document.getElementById('stage2-status').innerText = "Estado: Esperando datos de checkpoints";
+            document.getElementById('pipeline-epoch-counter').innerText = "Paso: 0 | Época: 0";
+            
+            // Redraw chart
+            drawChart();
+            
+            // Reset logs
+            consoleEl.innerHTML = '';
+            addLog("Simulación restablecida. Listo para iniciar de nuevo.", "info");
+        }
+
+        function runSimulationStep() {
+            epoch += 5;
+            document.getElementById('pipeline-epoch-counter').innerText = `Paso: ${simStep} | Época: ${epoch}`;
+            
+            // Stage 1 Training loop
+            if (simStep === 0) {
+                // Training NeRF
+                document.getElementById('stage1-status').innerText = `Estado: Entrenando Nerfacto con D_${datasetCount - 4}...`;
+                
+                // Add noise to weights (visual pulse)
+                pulseNetworkWeights();
+                
+                // Rise PSNR
+                currentPsnr += (Math.random() * 1.5 + 0.5);
+                if (currentPsnr > 34.0) currentPsnr = 34.0;
+                psnrData.push(parseFloat(currentPsnr.toFixed(2)));
+                if (psnrData.length > maxDataPoints) psnrData.shift();
+                drawChart(currentPsnr);
+                
+                addLog(`Época ${epoch}: Entrenando NeRF. PSNR actual: ${currentPsnr.toFixed(2)} dB. Pérdida de reconstrucción disminuyendo.`, 'info');
+                
+                // Check convergence (Threshold 28dB)
+                if (currentPsnr >= 28.0) {
+                    simStep = 1;
+                }
+            } 
+            else if (simStep === 1) {
+                // Convergence met! Save Checkpoint
+                document.getElementById('stage1-status').innerHTML = `<span style="color: var(--accent-orange); font-weight: bold;">¡Convergencia lograda! (${currentPsnr.toFixed(2)} dB)</span>`;
+                addLog(`¡Umbral de convergencia (>28 dB) alcanzado! Deteniendo entrenamiento temporalmente.`, 'success');
+                
+                // Flow checkpoint saved
+                document.getElementById('node-ckpt').classList.add('active');
+                addLog(`Guardando checkpoint del modelo: 'pesos_historico/model_t_${datasetCount}.ckpt'.`, 'success');
+                
+                // Update stage 2 status
+                document.getElementById('stage2-status').innerText = `Estado: Procesando checkpoint ${datasetCount}...`;
+                
+                simStep = 2;
+            }
+            else if (simStep === 2) {
+                // Feature Extraction
+                document.getElementById('node-features').classList.add('active');
+                addLog(`Extractor: Analizando matrices de pesos. Computando Media, Varianza y Valores Singulares (SVD).`, 'info');
+                
+                // Highlight SVD math tab
+                document.querySelector('[data-tab="tab-extraction"]').click();
+                
+                simStep = 3;
+            }
+            else if (simStep === 3) {
+                // Secondary MLP Model Inversion
+                document.getElementById('node-meta').classList.add('active');
+                addLog(`Meta-Modelo (MLP Secundario): Procesando estadísticas de entrada y realizando inferencia de pose.`, 'info');
+                
+                // Pulse Gram-Schmidt visualization
+                animateGSVectors();
+                
+                simStep = 4;
+            }
+            else if (simStep === 4) {
+                // Target NBV Camera Pose Predicted
+                document.getElementById('node-prediction').classList.add('active');
+                
+                // Predict Pose and compare with external NBV
+                const targetCam = document.querySelector(`.camera-icon[data-view="${activeNbvCamIdx}"]`);
+                if (targetCam) {
+                    targetCam.classList.add('nbv-candidate');
+                    targetCam.title = `NBV Candidate (Calculado por Meta-Modelo & Pose Real)`;
+                }
+                
+                const targetCamEl = document.getElementById(`svg-cam-${activeNbvCamIdx}`);
+                if (targetCamEl) {
+                    targetCamEl.setAttribute('class', 'sim-camera nbv-candidate');
+                }
+                
+                addLog(`Predicción: Pose NBV estimada (t_hat, r_hat). Pérdida Compuesta Calculada (MSE y Geodésica).`, 'success');
+                addLog(`Obteniendo Next Best View externa desde 'next_nbv.json'...`, 'info');
+                
+                simStep = 5;
+            }
+            else if (simStep === 5) {
+                // Update active dataset with the NBV view
+                const targetCam = document.querySelector(`.camera-icon[data-view="${activeNbvCamIdx}"]`);
+                if (targetCam) {
+                    targetCam.className = 'camera-icon active';
+                    targetCam.title = `Vista de Entrenamiento Integrada ${activeNbvCamIdx}`;
+                }
+
+                const targetCamEl = document.getElementById(`svg-cam-${activeNbvCamIdx}`);
+                const targetRayEl = document.getElementById(`svg-ray-${activeNbvCamIdx}`);
+                if (targetCamEl) {
+                    targetCamEl.setAttribute('class', 'sim-camera active');
+                }
+                if (targetRayEl) {
+                    targetRayEl.setAttribute('class', 'cam-ray active');
+                }
+                
+                addLog(`Dataset actualizado: D_${activeNbvCamIdx - 3} = D_${activeNbvCamIdx - 4} + Imagen_NBV_${activeNbvCamIdx}.`, 'success');
+                
+                datasetCount++;
+                activeNbvCamIdx++;
+                
+                // Load checkpoint and restart training loop
+                addLog(`Cargando checkpoint anterior y reanudando bucle incremental.`, 'info');
+                
+                // Reset flow highlights
+                document.getElementById('node-ckpt').classList.remove('active');
+                document.getElementById('node-features').classList.remove('active');
+                document.getElementById('node-meta').classList.remove('active');
+                document.getElementById('node-prediction').classList.remove('active');
+                
+                // Reduce PSNR temporarily because new data is added (Catastrophic Forgetting / positive transfer test)
+                currentPsnr = 23.5 + Math.random() * 2.0; 
+                psnrData.push(parseFloat(currentPsnr.toFixed(2)));
+                if (psnrData.length > maxDataPoints) psnrData.shift();
+                drawChart(currentPsnr);
+                
+                addLog(`Se agrega nueva vista al entrenamiento. Caída del PSNR a ${currentPsnr.toFixed(2)} dB (incorporando información nueva).`, 'warn');
+                
+                simStep = 0; // Go back to training loop
+                
+                // If we ran out of views, stop simulation
+                if (activeNbvCamIdx > 7) {
+                    pauseSimulation();
+                    document.getElementById('stage1-status').innerHTML = `<span style="color: var(--accent-green); font-weight: bold;">¡Simulación Completada!</span>`;
+                    document.getElementById('stage2-status').innerText = "Estado: Meta-Modelo entrenado con todo el histórico.";
+                    addLog("El dataset se ha completado con todas las vistas NBV. Simulación incremental terminada con éxito.", "success");
+                    
+                    // Highlight metamodel tab
+                    document.querySelector('[data-tab="tab-metamodel"]').click();
+                    
+                    // Light up output nodes of Meta-Model
+                    document.getElementById('node-prediction').style.borderColor = 'var(--accent-green)';
+                    document.getElementById('node-prediction').style.boxShadow = '0 0 20px var(--accent-green)';
+                }
+            }
+        }
+
+        // Visual helper animations
+        function pulseNetworkWeights() {
+            const edges = document.querySelectorAll('.nn-edge');
+            edges.forEach(edge => {
+                if (Math.random() > 0.6) {
+                    edge.classList.add('nn-edge-active');
+                    setTimeout(() => edge.classList.remove('nn-edge-active'), 500);
+                }
+            });
+        }
+
+        function animateGSVectors() {
+            const outGS = document.getElementById('gs-svg-out');
+            outGS.style.transform = 'rotate(30deg) scale(1.1)';
+            setTimeout(() => {
+                outGS.style.transform = 'none';
+            }, 400);
+        }
+    </script>
+</body>
+</html>
